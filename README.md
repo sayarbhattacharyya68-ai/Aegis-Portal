@@ -52,6 +52,7 @@ Image Processing: Pillow (PIL)
 
 📂 System Architecture:
 📁 SECURE_PASSWORD_MANAGER
+ 
  ├── main.py              # Central UI & Module Controller
 
  ├── database_logic.py    # SQL Logic, AES Encryption & Auth
