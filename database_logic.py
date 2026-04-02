@@ -7,31 +7,50 @@ from cryptography.fernet import Fernet
 def setup_security():
     conn = sqlite3.connect('vault.db', check_same_thread=False)
     cursor = conn.cursor()
+    # Added last_seen column to track activity
     cursor.execute('''CREATE TABLE IF NOT EXISTS users 
                       (email TEXT PRIMARY KEY, hashed_pw TEXT, 
                        ether_credits INTEGER DEFAULT 5, last_login TEXT, 
-                       status TEXT DEFAULT 'active')''')
+                       last_seen TEXT, status TEXT DEFAULT 'active')''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS accounts 
                       (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_email TEXT, 
                        site TEXT, username TEXT, password TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS transactions 
                       (id INTEGER PRIMARY KEY AUTOINCREMENT, user_email TEXT, 
                        amount INTEGER, timestamp TEXT, status TEXT, image_path TEXT)''')
-    
-    if not os.path.exists("system_master.key"):
-        key = Fernet.generate_key()
-        with open("system_master.key", "wb") as f: f.write(key)
+    conn.commit()
+    conn.close()
+
+def update_heartbeat(email):
+    """Updates the last_seen timestamp to the current time."""
+    conn = sqlite3.connect('vault.db', check_same_thread=False)
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute("UPDATE users SET last_seen = ? WHERE email = ?", (now, email))
     conn.commit()
     conn.close()
 
 def get_all_users():
-    """Fetches every single user registered in the system."""
+    """Fetches users and calculates online/offline status."""
     conn = sqlite3.connect('vault.db', check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute("SELECT email, ether_credits, status FROM users")
+    cursor.execute("SELECT email, ether_credits, status, last_seen FROM users")
     rows = cursor.fetchall()
     conn.close()
-    return rows
+    
+    processed_users = []
+    now = datetime.datetime.now()
+    for r in rows:
+        email, credits, status, last_seen = r
+        is_online = "Offline"
+        if last_seen:
+            ls_time = datetime.datetime.strptime(last_seen, "%Y-%m-%d %H:%M:%S")
+            # If active in the last 120 seconds, they are Online
+            if (now - ls_time).total_seconds() < 120:
+                is_online = "Online 🟢"
+            else:
+                is_online = "Offline ⚪"
+        processed_users.append((email, credits, status, is_online))
+    return processed_users
 
 def log_transaction(email, amount, status, image_path="None"):
     conn = sqlite3.connect('vault.db', check_same_thread=False)
@@ -56,6 +75,7 @@ def authenticate_user(email, password):
     row = cursor.fetchone()
     conn.close()
     if row and bcrypt.checkpw(password.encode(), row[0]):
+        update_heartbeat(email) # Initial pulse on login
         return row[1]
     return None
 
@@ -80,8 +100,8 @@ def create_user(email, password):
     hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
     try:
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        cursor.execute("INSERT INTO users (email, hashed_pw, ether_credits, last_login, status) VALUES (?, ?, 5, ?, 'active')", 
-                       (email, hashed, now))
+        cursor.execute("INSERT INTO users (email, hashed_pw, ether_credits, last_login, last_seen, status) VALUES (?, ?, 5, ?, ?, 'active')", 
+                       (email, hashed, now, now))
         conn.commit()
         return True
     except: return False
@@ -102,9 +122,8 @@ def recharge_credits(email, amount):
     conn.commit()
     conn.close()
 
-def save_account(owner, site, user, pwd):
-    with open("system_master.key", "rb") as f: key = f.read()
-    cipher = Fernet(key)
+def save_account(owner, site, user, pwd, user_key):
+    cipher = Fernet(user_key.encode())
     enc_pwd = cipher.encrypt(pwd.encode()).decode()
     conn = sqlite3.connect('vault.db', check_same_thread=False)
     cursor = conn.cursor()
@@ -113,12 +132,19 @@ def save_account(owner, site, user, pwd):
     conn.commit()
     conn.close()
 
-def fetch_accounts(owner):
-    with open("system_master.key", "rb") as f: key = f.read()
-    cipher = Fernet(key)
-    conn = sqlite3.connect('vault.db', check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute("SELECT site, username, password FROM accounts WHERE owner_email=?", (owner,))
-    rows = cursor.fetchall()
-    conn.close()
-    return [{"Site": r[0], "User": r[1], "Decrypted": cipher.decrypt(r[2].encode()).decode()} for r in rows]
+def fetch_accounts(owner, user_provided_key):
+    try:
+        cipher = Fernet(user_provided_key.encode())
+        conn = sqlite3.connect('vault.db', check_same_thread=False)
+        cursor = conn.cursor()
+        cursor.execute("SELECT site, username, password FROM accounts WHERE owner_email=?", (owner,))
+        rows = cursor.fetchall()
+        conn.close()
+        
+        decrypted_data = []
+        for r in rows:
+            decrypted_pwd = cipher.decrypt(r[2].encode()).decode()
+            decrypted_data.append({"Site": r[0], "User": r[1], "Decrypted Password": decrypted_pwd})
+        return decrypted_data
+    except Exception:
+        return None
