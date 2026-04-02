@@ -27,13 +27,17 @@ st.markdown("""
     h1, h2, h3, label, p, .stMarkdown, [data-testid="stMetricLabel"] {
         color: #080D24 !important; font-family: 'Segoe UI', sans-serif; font-weight: bold !important;
     }
+    .stButton>button {
+        border-radius: 5px;
+        font-weight: bold;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
-# --- LOGIN ---
+# --- LOGIN GATE ---
 if not st.session_state.logged_in:
     st.title("🔓 Aegis-Portal Login")
     t1, t2 = st.tabs(["Link Identity", "New Shard"])
@@ -58,16 +62,16 @@ if not st.session_state.logged_in:
     st.stop()
 
 # --- HEARTBEAT PULSE ---
-# This runs every time the script reruns (on any user interaction)
 update_heartbeat(st.session_state.user_email)
 
-# --- ADMIN TERMINAL ---
+# --- SIDEBAR & LOGOUT ---
 st.sidebar.title("⚙️ System Control")
+
+# Admin Terminal
 with st.sidebar.expander("🔑 Admin Terminal"):
     admin_input = st.text_input("Admin Key", type="password")
     if admin_input == os.getenv("ADMIN_KEY", "Sayar_Admin_2026"):
         st.write("### Global User Directory")
-        # get_all_users() now includes the Online/Offline calculation
         all_users = get_all_users()
         u_df = pd.DataFrame(all_users, columns=["Email", "EC", "Status", "Presence"])
         st.dataframe(u_df, use_container_width=True)
@@ -80,22 +84,7 @@ with st.sidebar.expander("🔑 Admin Terminal"):
             update_user_status(target, 'active')
             st.rerun()
 
-        st.write("---")
-        st.write("### Payment Evidence")
-        for t in get_transactions():
-            st.write(f"**{t[1]}** | ₹{t[2]}")
-            if t[5] != "None" and os.path.exists(t[5]):
-                st.image(t[5], width=200)
-
-# --- LOCKDOWN ---
-if check_status(st.session_state.user_email) == 'banned':
-    st.error(f"🚨 ACCESS DENIED. Contact Admin at {get_admin_contact()}")
-    if st.button("Logout"):
-        st.session_state.logged_in = False
-        st.rerun()
-    st.stop()
-
-# --- MODULES ---
+# User Stats
 conn = sqlite3.connect('vault.db')
 res = conn.execute("SELECT ether_credits FROM users WHERE email=?", (st.session_state.user_email,)).fetchone()
 credits = res[0] if res else 0
@@ -104,9 +93,27 @@ conn.close()
 st.sidebar.metric("Ether-Credits (EC)", f"{credits} 💎")
 module = st.sidebar.selectbox("Module", ["Archive Vault", "AI Oracle", "Credit-Bay (₹)"])
 
+st.sidebar.write("---")
+# MANDATORY LOGOUT OPTION
+if st.sidebar.button("🔴 Terminate Session (Logout)"):
+    # Clear all session data for security
+    st.session_state.logged_in = False
+    st.session_state.user_email = None
+    if "current_session_key" in st.session_state:
+        del st.session_state["current_session_key"]
+    st.rerun()
+
+# --- LOCKDOWN CHECK ---
+if check_status(st.session_state.user_email) == 'banned':
+    st.error(f"🚨 ACCESS DENIED. Contact Admin at {get_admin_contact()}")
+    st.stop()
+
+# --- MODULE CONTENT ---
 if module == "Archive Vault":
     st.subheader("📂 Shard Decryption")
+    st.write("Input your unique **Privacy Shard Key** to unlock your data.")
     input_key = st.text_input("Enter Secret Shard Key", type="password")
+    
     if st.button("Decrypt Shard"):
         if input_key:
             data = fetch_accounts(st.session_state.user_email, input_key)
@@ -114,7 +121,7 @@ if module == "Archive Vault":
                 st.table(data)
                 notify_user("Shard Decrypted.", "success")
             else:
-                st.error("🚨 INVALID KEY. Decryption failed.")
+                st.error("🚨 ACCESS DENIED. Incorrect key or corrupt shard.")
         else: st.warning("Key required.")
 
 elif module == "AI Oracle":
@@ -122,6 +129,7 @@ elif module == "AI Oracle":
     site = st.text_input("Service")
     user = st.text_input("ID")
     pwd = st.text_input("Password", type="password")
+    
     if st.button("Analyze & Archive"):
         if credits > 0:
             if use_credit(st.session_state.user_email):
@@ -130,12 +138,14 @@ elif module == "AI Oracle":
                 else: st.warning("⚠️ PASSWORD RATING: WEAK")
                 
                 st.info(f"💡 Oracle Opinions: {analysis.replace('[STRONG]', '').replace('[WEAK]', '')}")
+                
                 save_account(st.session_state.user_email, site, user, pwd, st.session_state.current_session_key)
                 
                 st.markdown("---")
-                st.subheader("🛡️ Shard Archived")
+                st.subheader("🛡️ Shard Archived Successfully")
+                st.write("**YOUR UNIQUE SAFETY KEY:**")
                 st.code(st.session_state.current_session_key, language="text")
-                st.warning("Save this key. It is unique to this shard and not stored anywhere else.")
+                st.warning("Save this key. It is the ONLY way to decrypt this data later.")
         else: st.error("No Credits.")
 
 elif module == "Credit-Bay (₹)":
