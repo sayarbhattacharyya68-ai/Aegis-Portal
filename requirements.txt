@@ -1,0 +1,6 @@
+cryptography
+groq
+python-dotenv
+streamlit
+bcrypt
+google-generativeai

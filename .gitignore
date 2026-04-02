@@ -1,0 +1,8 @@
+# Ignore local database and keys
+vault.db
+secret.key
+.env
+
+# Ignore Python cache
+__pycache__/
+*.pyc
