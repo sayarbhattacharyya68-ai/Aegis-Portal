@@ -67,6 +67,8 @@ Image Processing: Pillow (PIL)
  ├── database_logic.py    # SQL Logic, AES Encryption & Auth
  
  ├── ai_analyser.py       # Groq (Text) & Gemini (Vision) Integration
+
+ ├── notifier.py          # User Alerts & System Notifications 
  
  ├── .env                 # API Keys & Secrets (Groq/Google)
  
