@@ -2,9 +2,9 @@
 
 Aegis-Portal is a high-security, AI-driven credential management and risk-analysis ecosystem. Built for research in Applied Cryptography and Adversarial AI, the platform provides a production-ready interface for encrypting sensitive shards (account credentials) while utilizing a custom Ether-Credit (EC) economy. It features a sophisticated, vector-flat themed dashboard and an integrated AI Oracle for real-time security auditing.
 
-🚀 Key Features & Modules
+****🚀 Key Features & Modules**:**
 
-1. Secure Identity & Shard Encryption
+**1. Secure Identity & Shard Encryption**
 
 Encrypted Authentication: Uses bcrypt for salted password hashing during login/registration, ensuring that user identities are protected from the database level.
 
@@ -12,7 +12,7 @@ Military-Grade Vaulting: Implements AES-256 (Fernet) encryption for all stored c
 
 Shard Isolation: Each user's data is strictly isolated within a SQLite-powered backend, preventing cross-tenant data leaks.
 
-2. The AI Oracle (Powered by Llama-3.3 & Groq)
+**2. The AI Oracle (Powered by Llama-3.3 & Groq)**
 
 Real-time Security Auditing: Integrates the Llama-3.3-70B model via the Groq API to perform tactical analysis of password payloads.
 
@@ -20,7 +20,7 @@ Vulnerability Assessment: The Oracle provides a security grade and a one-sentenc
 
 Adversarial Prevention: Designed to detect and warn against common LLM vulnerabilities and weak entropy patterns.
 
-3. Ether-Credit (EC) Economy & Credit-Bay
+**3. Ether-Credit (EC) Economy & Credit-Bay**
 
 Resource-Gated AI Usage: Access to the AI Oracle is regulated by "Ether-Credits." This simulates a SaaS environment where high-compute tasks are metered.
 
@@ -28,7 +28,7 @@ AI-Verified Recharge System: Features a "Credit-Bay" where users can recharge EC
 
 Vision-Based Verification: Implements Gemini-1.5-Flash (Vision AI) to scan uploaded UPI payment screenshots. The AI autonomously verifies the status (Success), the recipient (Sayar Bhattacharyya), and the transaction amount before updating the database.
 
-4. Admin Control & Revocation Terminal
+**4. Admin Control & Revocation Terminal**
 
 Identity Revocation: A hidden Admin Terminal (protected by a Master Admin Key) allows for the immediate banning of fraudulent users.
 
@@ -36,13 +36,13 @@ Transaction Audit Log: Admins have access to a full audit trail of all payment a
 
 Global Lockdown: Once a user is banned, a Security Lockdown protocol instantly revokes access to the AI Oracle and Archive Vault modules, even if the user has a valid session.
 
-5. Aesthetic & UX Design
+**5. Aesthetic & UX Design**
 
 Flat-Vector Theme: A custom-designed UI using a Purple, Pink, and Mint-Teal palette inspired by modern flat-vector illustrations.
 
 High-Contrast Readability: Optimized CSS for high visibility, featuring dark-indigo text labels on pastel input fields to ensure a seamless professional experience.
 
-🛠️ Tech Stack
+**🛠️ Tech Stack**
 
 Frontend: Streamlit (Custom CSS injected for Vector-Flat styling)
 
@@ -58,9 +58,9 @@ Environment Management: python-dotenv
 
 Image Processing: Pillow (PIL)
 
-📂 System Architecture:
+**📂 System Architecture:**
 
-📁 SECURE_PASSWORD_MANAGER
+**📁 SECURE_PASSWORD_MANAGER**
  
  ├── main.py              # Central UI & Module Controller
 
@@ -76,5 +76,6 @@ Image Processing: Pillow (PIL)
  
  └── my_upi_qr.jpeg       # Payment Gateway QR Asset
 
-⚠️ Security Disclaimer
+**⚠️ Security Disclaimer**
+
 This application is developed as a part of a research project into Autonomous Cyber-Physical Resilience. All payment simulations are intended for research presentation purposes. Fraudulent activity or manipulation of the payment screenshot system results in immediate revocation of Shard Identity and data access.
