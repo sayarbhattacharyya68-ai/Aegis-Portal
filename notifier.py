@@ -1,23 +1,26 @@
-import smtplib
-from email.message import EmailMessage
+import datetime 
+import streamlit as st
 
-# For testing, you can call this manually or integrate with a background task
-def send_security_alert(user_email):
-    # USE YOUR APP PASSWORD HERE
-    EMAIL_ADDRESS = "your-email@gmail.com"
-    EMAIL_PASSWORD = "your-app-password" 
+def notify_user(message, type="info"):
+    if type == "success":
+        st.toast(f"✅ {message}")
+    elif type == "error":
+        st.error(f"🚨 {message}")
+    elif type == "warning":
+        st.warning(f"⚠️ {message}")
+    else:
+        st.info(f"ℹ️ {message}")
 
-    msg = EmailMessage()
-    msg['Subject'] = '🛡️ Vault+ Security Checkup'
-    msg['From'] = EMAIL_ADDRESS
-    msg['To'] = user_email
-    msg.set_content(f"Hi {user_email},\n\nOur system noticed you haven't updated your passwords in a while. "
-                    "For maximum security, we recommend rotating your credentials to prevent credential leaks.")
+def get_admin_contact():
+    return "8910162728"
 
-    try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-            smtp.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-            smtp.send_message(msg)
-        return True
-    except:
-        return False
+def display_oracle_opinion(rating, opinion):
+    if "[STRONG]" in rating.upper():
+        st.success(f"**ORACLE STATUS:** STRONG")
+    else:
+        st.warning(f"**ORACLE STATUS:** WEAK")
+    st.write(f"**Tactical Opinions:** _{opinion}_")
+
+def security_alert(event_name, user_email):
+    # Now this line will work because datetime is imported
+    print(f"[SECURITY CRITICAL] {datetime.datetime.now()} | {event_name} | Target: {user_email}")
