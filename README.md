@@ -53,11 +53,17 @@ Image Processing: Pillow (PIL)
 📂 System Architecture:
 📁 SECURE_PASSWORD_MANAGER
  ├── main.py              # Central UI & Module Controller
+
  ├── database_logic.py    # SQL Logic, AES Encryption & Auth
+ 
  ├── ai_analyser.py       # Groq (Text) & Gemini (Vision) Integration
+ 
  ├── .env                 # API Keys & Secrets (Groq/Google)
+ 
  ├── vault.db             # Local Encrypted Database
+ 
  ├── secret.key           # Fernet Encryption Key
+ 
  └── my_upi_qr.jpeg       # Payment Gateway QR Asset
 
 ⚠️ Security Disclaimer
