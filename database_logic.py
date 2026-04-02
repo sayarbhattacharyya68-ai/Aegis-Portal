@@ -7,14 +7,23 @@ from cryptography.fernet import Fernet
 def setup_security():
     conn = sqlite3.connect('vault.db', check_same_thread=False)
     cursor = conn.cursor()
-    # Added last_seen column to track activity
+    
+    # 1. Create tables if they don't exist
     cursor.execute('''CREATE TABLE IF NOT EXISTS users 
                       (email TEXT PRIMARY KEY, hashed_pw TEXT, 
                        ether_credits INTEGER DEFAULT 5, last_login TEXT, 
-                       last_seen TEXT, status TEXT DEFAULT 'active')''')
+                       status TEXT DEFAULT 'active')''')
+    
+    # 2. SCHEMA MIGRATION: Check if 'last_seen' exists, if not, add it
+    cursor.execute("PRAGMA table_info(users)")
+    columns = [column[1] for column in cursor.fetchall()]
+    if "last_seen" not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN last_seen TEXT")
+    
     cursor.execute('''CREATE TABLE IF NOT EXISTS accounts 
                       (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_email TEXT, 
                        site TEXT, username TEXT, password TEXT)''')
+    
     cursor.execute('''CREATE TABLE IF NOT EXISTS transactions 
                       (id INTEGER PRIMARY KEY AUTOINCREMENT, user_email TEXT, 
                        amount INTEGER, timestamp TEXT, status TEXT, image_path TEXT)''')
@@ -22,7 +31,6 @@ def setup_security():
     conn.close()
 
 def update_heartbeat(email):
-    """Updates the last_seen timestamp to the current time."""
     conn = sqlite3.connect('vault.db', check_same_thread=False)
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn.execute("UPDATE users SET last_seen = ? WHERE email = ?", (now, email))
@@ -30,7 +38,6 @@ def update_heartbeat(email):
     conn.close()
 
 def get_all_users():
-    """Fetches users and calculates online/offline status."""
     conn = sqlite3.connect('vault.db', check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute("SELECT email, ether_credits, status, last_seen FROM users")
@@ -41,15 +48,14 @@ def get_all_users():
     now = datetime.datetime.now()
     for r in rows:
         email, credits, status, last_seen = r
-        is_online = "Offline"
+        presence = "Offline ⚪"
         if last_seen:
-            ls_time = datetime.datetime.strptime(last_seen, "%Y-%m-%d %H:%M:%S")
-            # If active in the last 120 seconds, they are Online
-            if (now - ls_time).total_seconds() < 120:
-                is_online = "Online 🟢"
-            else:
-                is_online = "Offline ⚪"
-        processed_users.append((email, credits, status, is_online))
+            try:
+                ls_time = datetime.datetime.strptime(last_seen, "%Y-%m-%d %H:%M:%S")
+                if (now - ls_time).total_seconds() < 120:
+                    presence = "Online 🟢"
+            except: pass
+        processed_users.append((email, credits, status, presence))
     return processed_users
 
 def log_transaction(email, amount, status, image_path="None"):
@@ -75,7 +81,7 @@ def authenticate_user(email, password):
     row = cursor.fetchone()
     conn.close()
     if row and bcrypt.checkpw(password.encode(), row[0]):
-        update_heartbeat(email) # Initial pulse on login
+        update_heartbeat(email)
         return row[1]
     return None
 
