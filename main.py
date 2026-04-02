@@ -16,28 +16,24 @@ setup_security()
 if not os.path.exists("audit_screenshots"):
     os.makedirs("audit_screenshots")
 
-# Persistent unique key for this session
 if "current_session_key" not in st.session_state:
     st.session_state.current_session_key = Fernet.generate_key().decode()
 
-# --- CSS THEME ---
+# --- THEME ---
 st.markdown("""
 <style>
     .stApp { background-color: #7064DF !important; }
     h1, h2, h3, label, p, .stMarkdown, [data-testid="stMetricLabel"] {
         color: #080D24 !important; font-family: 'Segoe UI', sans-serif; font-weight: bold !important;
     }
-    .stButton>button {
-        border-radius: 5px;
-        font-weight: bold;
-    }
+    .stButton>button { border-radius: 5px; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
-# --- LOGIN GATE ---
+# --- LOGIN ---
 if not st.session_state.logged_in:
     st.title("🔓 Aegis-Portal Login")
     t1, t2 = st.tabs(["Link Identity", "New Shard"])
@@ -61,13 +57,12 @@ if not st.session_state.logged_in:
             else: st.error("User exists.")
     st.stop()
 
-# --- HEARTBEAT PULSE ---
+# --- HEARTBEAT ---
 update_heartbeat(st.session_state.user_email)
 
-# --- SIDEBAR & LOGOUT ---
+# --- SIDEBAR ---
 st.sidebar.title("⚙️ System Control")
 
-# Admin Terminal
 with st.sidebar.expander("🔑 Admin Terminal"):
     admin_input = st.text_input("Admin Key", type="password")
     if admin_input == os.getenv("ADMIN_KEY", "Sayar_Admin_2026"):
@@ -84,7 +79,6 @@ with st.sidebar.expander("🔑 Admin Terminal"):
             update_user_status(target, 'active')
             st.rerun()
 
-# User Stats
 conn = sqlite3.connect('vault.db')
 res = conn.execute("SELECT ether_credits FROM users WHERE email=?", (st.session_state.user_email,)).fetchone()
 credits = res[0] if res else 0
@@ -94,34 +88,29 @@ st.sidebar.metric("Ether-Credits (EC)", f"{credits} 💎")
 module = st.sidebar.selectbox("Module", ["Archive Vault", "AI Oracle", "Credit-Bay (₹)"])
 
 st.sidebar.write("---")
-# MANDATORY LOGOUT OPTION
 if st.sidebar.button("🔴 Terminate Session (Logout)"):
-    # Clear all session data for security
     st.session_state.logged_in = False
     st.session_state.user_email = None
     if "current_session_key" in st.session_state:
         del st.session_state["current_session_key"]
     st.rerun()
 
-# --- LOCKDOWN CHECK ---
 if check_status(st.session_state.user_email) == 'banned':
     st.error(f"🚨 ACCESS DENIED. Contact Admin at {get_admin_contact()}")
     st.stop()
 
-# --- MODULE CONTENT ---
+# --- MODULES ---
 if module == "Archive Vault":
     st.subheader("📂 Shard Decryption")
     st.write("Input your unique **Privacy Shard Key** to unlock your data.")
     input_key = st.text_input("Enter Secret Shard Key", type="password")
-    
     if st.button("Decrypt Shard"):
         if input_key:
             data = fetch_accounts(st.session_state.user_email, input_key)
             if data:
                 st.table(data)
                 notify_user("Shard Decrypted.", "success")
-            else:
-                st.error("🚨 ACCESS DENIED. Incorrect key or corrupt shard.")
+            else: st.error("🚨 INVALID KEY.")
         else: st.warning("Key required.")
 
 elif module == "AI Oracle":
@@ -129,23 +118,18 @@ elif module == "AI Oracle":
     site = st.text_input("Service")
     user = st.text_input("ID")
     pwd = st.text_input("Password", type="password")
-    
     if st.button("Analyze & Archive"):
         if credits > 0:
             if use_credit(st.session_state.user_email):
                 analysis = get_oracle_analysis(pwd)
                 if "[STRONG]" in analysis: st.success("✅ PASSWORD RATING: STRONG")
                 else: st.warning("⚠️ PASSWORD RATING: WEAK")
-                
                 st.info(f"💡 Oracle Opinions: {analysis.replace('[STRONG]', '').replace('[WEAK]', '')}")
-                
                 save_account(st.session_state.user_email, site, user, pwd, st.session_state.current_session_key)
-                
                 st.markdown("---")
-                st.subheader("🛡️ Shard Archived Successfully")
-                st.write("**YOUR UNIQUE SAFETY KEY:**")
+                st.subheader("🛡️ Shard Archived")
                 st.code(st.session_state.current_session_key, language="text")
-                st.warning("Save this key. It is the ONLY way to decrypt this data later.")
+                st.warning("Save this key. It is not stored anywhere else.")
         else: st.error("No Credits.")
 
 elif module == "Credit-Bay (₹)":
