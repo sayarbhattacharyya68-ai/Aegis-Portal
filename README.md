@@ -51,6 +51,7 @@ Environment Management: python-dotenv
 Image Processing: Pillow (PIL)
 
 📂 System Architecture:
+
 📁 SECURE_PASSWORD_MANAGER
  
  ├── main.py              # Central UI & Module Controller
