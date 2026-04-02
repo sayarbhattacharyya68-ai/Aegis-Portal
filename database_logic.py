@@ -8,28 +8,68 @@ def setup_security():
     conn = sqlite3.connect('vault.db', check_same_thread=False)
     cursor = conn.cursor()
     
-    # 1. Create tables if they don't exist
+    # Users Table
     cursor.execute('''CREATE TABLE IF NOT EXISTS users 
                       (email TEXT PRIMARY KEY, hashed_pw TEXT, 
                        ether_credits INTEGER DEFAULT 5, last_login TEXT, 
-                       status TEXT DEFAULT 'active')''')
+                       last_seen TEXT, status TEXT DEFAULT 'active')''')
     
-    # 2. SCHEMA MIGRATION: Check if 'last_seen' exists, if not, add it
+    # Schema Migration for last_seen
     cursor.execute("PRAGMA table_info(users)")
     columns = [column[1] for column in cursor.fetchall()]
     if "last_seen" not in columns:
         cursor.execute("ALTER TABLE users ADD COLUMN last_seen TEXT")
     
+    # Accounts Table
     cursor.execute('''CREATE TABLE IF NOT EXISTS accounts 
                       (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_email TEXT, 
                        site TEXT, username TEXT, password TEXT)''')
     
+    # Transactions Table (Now handles Manual Approval)
     cursor.execute('''CREATE TABLE IF NOT EXISTS transactions 
                       (id INTEGER PRIMARY KEY AUTOINCREMENT, user_email TEXT, 
                        amount INTEGER, timestamp TEXT, status TEXT, image_path TEXT)''')
     conn.commit()
     conn.close()
 
+def log_transaction(email, amount, status, image_path):
+    conn = sqlite3.connect('vault.db', check_same_thread=False)
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute("INSERT INTO transactions (user_email, amount, timestamp, status, image_path) VALUES (?, ?, ?, ?, ?)", 
+                 (email, amount, now, status, image_path))
+    conn.commit()
+    conn.close()
+
+def get_pending_transactions():
+    conn = sqlite3.connect('vault.db', check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM transactions WHERE status = 'PENDING' ORDER BY id DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+def approve_transaction(t_id):
+    conn = sqlite3.connect('vault.db', check_same_thread=False)
+    cursor = conn.cursor()
+    # 1. Get transaction details
+    cursor.execute("SELECT user_email, amount FROM transactions WHERE id = ?", (t_id,))
+    row = cursor.fetchone()
+    if row:
+        email, amount = row
+        # 2. Add Credits
+        cursor.execute("UPDATE users SET ether_credits = ether_credits + ? WHERE email = ?", (amount, email))
+        # 3. Mark as Success
+        cursor.execute("UPDATE transactions SET status = 'SUCCESS' WHERE id = ?", (t_id,))
+        conn.commit()
+    conn.close()
+
+def reject_transaction(t_id):
+    conn = sqlite3.connect('vault.db', check_same_thread=False)
+    conn.execute("UPDATE transactions SET status = 'REJECTED' WHERE id = ?", (t_id,))
+    conn.commit()
+    conn.close()
+
+# --- PREVIOUS FUNCTIONS REMAINING THE SAME ---
 def update_heartbeat(email):
     conn = sqlite3.connect('vault.db', check_same_thread=False)
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -43,7 +83,6 @@ def get_all_users():
     cursor.execute("SELECT email, ether_credits, status, last_seen FROM users")
     rows = cursor.fetchall()
     conn.close()
-    
     processed_users = []
     now = datetime.datetime.now()
     for r in rows:
@@ -52,27 +91,10 @@ def get_all_users():
         if last_seen:
             try:
                 ls_time = datetime.datetime.strptime(last_seen, "%Y-%m-%d %H:%M:%S")
-                if (now - ls_time).total_seconds() < 120:
-                    presence = "Online 🟢"
+                if (now - ls_time).total_seconds() < 120: presence = "Online 🟢"
             except: pass
         processed_users.append((email, credits, status, presence))
     return processed_users
-
-def log_transaction(email, amount, status, image_path="None"):
-    conn = sqlite3.connect('vault.db', check_same_thread=False)
-    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn.execute("INSERT INTO transactions (user_email, amount, timestamp, status, image_path) VALUES (?, ?, ?, ?, ?)", 
-                 (email, amount, now, status, image_path))
-    conn.commit()
-    conn.close()
-
-def get_transactions():
-    conn = sqlite3.connect('vault.db', check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM transactions ORDER BY id DESC")
-    rows = cursor.fetchall()
-    conn.close()
-    return rows
 
 def authenticate_user(email, password):
     conn = sqlite3.connect('vault.db', check_same_thread=False)
@@ -121,13 +143,6 @@ def use_credit(email):
     conn.close()
     return True
 
-def recharge_credits(email, amount):
-    conn = sqlite3.connect('vault.db', check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET ether_credits = ether_credits + ? WHERE email=?", (amount, email))
-    conn.commit()
-    conn.close()
-
 def save_account(owner, site, user, pwd, user_key):
     cipher = Fernet(user_key.encode())
     enc_pwd = cipher.encrypt(pwd.encode()).decode()
@@ -146,11 +161,9 @@ def fetch_accounts(owner, user_provided_key):
         cursor.execute("SELECT site, username, password FROM accounts WHERE owner_email=?", (owner,))
         rows = cursor.fetchall()
         conn.close()
-        
         decrypted_data = []
         for r in rows:
             decrypted_pwd = cipher.decrypt(r[2].encode()).decode()
             decrypted_data.append({"Site": r[0], "User": r[1], "Decrypted Password": decrypted_pwd})
         return decrypted_data
-    except Exception:
-        return None
+    except Exception: return None
