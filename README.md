@@ -59,5 +59,6 @@ Image Processing: Pillow (PIL)
  ├── vault.db             # Local Encrypted Database
  ├── secret.key           # Fernet Encryption Key
  └── my_upi_qr.jpeg       # Payment Gateway QR Asset
+
 ⚠️ Security Disclaimer
 This application is developed as a part of a research project into Autonomous Cyber-Physical Resilience. All payment simulations are intended for research presentation purposes. Fraudulent activity or manipulation of the payment screenshot system results in immediate revocation of Shard Identity and data access.
