@@ -54,25 +54,57 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Inject PWA Manifest & Service Worker
-st.markdown("""
-    <link rel="manifest" href="./manifest.json">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="Aegis-Portal">
-    <link rel="apple-touch-icon" href="./icon-192.png">
-    <script>
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', function() {
-                navigator.serviceWorker.register('./sw.js').then(function(registration) {
-                    console.log('ServiceWorker registration successful');
-                }, function(err) {
-                    console.log('ServiceWorker registration failed: ', err);
-                });
-            });
-        }
-    </script>
-""", unsafe_allow_html=True)
+# Inject PWA Manifest & Service Worker (Using Data URIs for Streamlit Cloud compatibility)
+def inject_pwa():
+    import base64
+    import json
+    
+    def get_file_b64(path):
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                return base64.b64encode(f.read()).decode()
+        return ""
+
+    icon_192 = get_file_b64("icon-192.png")
+    icon_512 = get_file_b64("icon-512.png")
+    
+    manifest = {
+        "name": "Aegis-Portal",
+        "short_name": "Aegis",
+        "description": "Cyber-Physical Resilience Command Center",
+        "start_url": ".",
+        "scope": ".",
+        "display": "standalone",
+        "background_color": "#080D24",
+        "theme_color": "#7064DF",
+        "icons": [
+            {"src": f"data:image/png;base64,{icon_192}", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+            {"src": f"data:image/png;base64,{icon_512}", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+        ]
+    }
+    
+    manifest_b64 = base64.b64encode(json.dumps(manifest).encode()).decode()
+    
+    st.markdown(f"""
+        <link rel="manifest" href="data:application/manifest+json;base64,{manifest_b64}">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+        <meta name="apple-mobile-web-app-title" content="Aegis-Portal">
+        <link rel="apple-touch-icon" href="data:image/png;base64,{icon_192}">
+        <script>
+            if ('serviceWorker' in navigator) {{
+                window.addEventListener('load', function() {{
+                    navigator.serviceWorker.register('./sw.js').then(function(registration) {{
+                        console.log('ServiceWorker registration successful');
+                    }}, function(err) {{
+                        console.log('ServiceWorker registration failed: ', err);
+                    }});
+                }});
+            }}
+        </script>
+    """, unsafe_allow_html=True)
+
+inject_pwa()
 
 # Initialize DB schema
 setup_security()
@@ -101,6 +133,12 @@ st.markdown("""
         font-family: 'Inter', sans-serif;
         color: #E2E8F0;
     }
+
+    /* ── HIDE STREAMLIT BRANDING (FOR PWA) ── */
+    header {visibility: hidden;}
+    footer {visibility: hidden;}
+    #MainMenu {visibility: hidden;}
+    .stDeployButton {display:none;}
     
     h1, h2, h3, h4, h5, h6 {
         color: #FFFFFF !important;
