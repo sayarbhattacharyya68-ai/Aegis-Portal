@@ -111,21 +111,21 @@ def inject_pwa():
         <meta name="theme-color" content="#080D24">
         <script>
             let deferredPrompt;
-            window.addEventListener('beforeinstallprompt', (e) => {
+            window.addEventListener('beforeinstallprompt', (e) => {{
                 e.preventDefault();
                 deferredPrompt = e;
                 // Notify the Streamlit app that installation is possible
-                window.postMessage({type: 'pwa_install_ready'}, '*');
-            });
+                window.postMessage({{type: 'pwa_install_ready'}}, '*');
+            }});
 
-            window.addEventListener('message', (event) => {
-                if (event.data.type === 'trigger_pwa_install' && deferredPrompt) {
+            window.addEventListener('message', (event) => {{
+                if (event.data.type === 'trigger_pwa_install' && deferredPrompt) {{
                     deferredPrompt.prompt();
-                    deferredPrompt.userChoice.then((choiceResult) => {
+                    deferredPrompt.userChoice.then((choiceResult) => {{
                         deferredPrompt = null;
-                    });
-                }
-            });
+                    }});
+                }}
+            }});
 
             if ('serviceWorker' in navigator) {{
                 window.addEventListener('load', function() {{
