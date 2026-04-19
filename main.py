@@ -139,11 +139,15 @@ st.markdown("""
 
     /* ── TOTAL BRANDING PURGE (FOR PWA) ── */
     footer {display: none !important;}
+    [data-testid="stFooter"] {display: none !important;}
     header {display: none !important;}
+    [data-testid="stHeader"] {display: none !important;}
     #MainMenu {display: none !important;}
     .stDeployButton {display: none !important;}
     [data-testid="stStatusWidget"] {display: none !important;}
     #stDecoration {display: none !important;}
+    .viewerBadge_container__1QS1Y {display: none !important;}
+    .viewerBadge_link__1LSvE {display: none !important;}
     
     h1, h2, h3, h4, h5, h6 {
         color: #FFFFFF !important;

@@ -10,3 +10,7 @@ font="sans serif"
 enableCORS = false
 enableXsrfProtection = false
 headless = true
+
+[client]
+toolbarMode = "minimal"
+showErrorDetails = false
