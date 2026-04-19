@@ -137,14 +137,11 @@ st.markdown("""
         color: #E2E8F0;
     }
 
-    /* ── TOTAL BRANDING PURGE (FOR PWA) ── */
-    footer {display: none !important;}
+    /* ── BRANDING OPTIMIZATION ── */
     [data-testid="stFooter"] {display: none !important;}
-    header {display: none !important;}
-    [data-testid="stHeader"] {display: none !important;}
-    #MainMenu {display: none !important;}
+    [data-testid="stHeader"] {background: transparent !important;}
+    #MainMenu {visibility: hidden !important;}
     .stDeployButton {display: none !important;}
-    [data-testid="stStatusWidget"] {display: none !important;}
     #stDecoration {display: none !important;}
     .viewerBadge_container__1QS1Y {display: none !important;}
     .viewerBadge_link__1LSvE {display: none !important;}
@@ -385,16 +382,8 @@ st.sidebar.markdown("---")
 
 # Metrics & Identity
 credits = get_user_credits(st.session_state.user_email)
-st.sidebar.markdown(f"""
-<div style="background: rgba(112, 100, 223, 0.1); padding: 20px; border-radius: 12px; border: 1px solid rgba(112, 100, 223, 0.2); margin-bottom: 20px;">
-    <p style="margin: 0; font-size: 0.7em; color: #A0AEC0; text-transform: uppercase; letter-spacing: 1.5px;">Identity Shard</p>
-    <h3 style="margin: 5px 0 15px 0; color: #FFFFFF; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{st.session_state.user_email}</h3>
-    <div style="display: flex; align-items: center; justify-content: space-between;">
-        <span style="color: #94FBAB; font-weight: 800; font-size: 1.4rem;">{credits} 💎</span>
-        <span style="background: rgba(148, 251, 171, 0.1); color: #94FBAB; padding: 4px 10px; border-radius: 6px; font-size: 0.65em; font-weight: 700;">EC BALANCE</span>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+st.sidebar.metric("Ether-Credits", f"{credits} 💎")
+st.sidebar.markdown(f"**Identity:** `{st.session_state.user_email}`")
 st.sidebar.markdown("---")
 
 # Navigation
