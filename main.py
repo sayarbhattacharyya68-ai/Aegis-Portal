@@ -250,7 +250,7 @@ st.markdown("""
         font-family: 'JetBrains Mono', monospace !important;
         font-weight: 800 !important;
         color: #94FBAB !important;
-        font-size: 2.5rem !important;
+        font-size: 1.8rem !important;
     }
     [data-testid="stMetricLabel"] {
         color: #A0AEC0 !important;
@@ -383,9 +383,18 @@ if current_status == 'lockdown':
 st.sidebar.markdown("<h2 style='text-align: center; color: #94FBAB;'>SYSTEM CONTROL</h2>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
-# Metrics
+# Metrics & Identity
 credits = get_user_credits(st.session_state.user_email)
-st.sidebar.metric("Ether-Credits", f"{credits} 💎")
+st.sidebar.markdown(f"""
+<div style="background: rgba(112, 100, 223, 0.1); padding: 20px; border-radius: 12px; border: 1px solid rgba(112, 100, 223, 0.2); margin-bottom: 20px;">
+    <p style="margin: 0; font-size: 0.7em; color: #A0AEC0; text-transform: uppercase; letter-spacing: 1.5px;">Identity Shard</p>
+    <h3 style="margin: 5px 0 15px 0; color: #FFFFFF; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{st.session_state.user_email}</h3>
+    <div style="display: flex; align-items: center; justify-content: space-between;">
+        <span style="color: #94FBAB; font-weight: 800; font-size: 1.4rem;">{credits} 💎</span>
+        <span style="background: rgba(148, 251, 171, 0.1); color: #94FBAB; padding: 4px 10px; border-radius: 6px; font-size: 0.65em; font-weight: 700;">EC BALANCE</span>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
 # Navigation
