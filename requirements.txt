@@ -5,6 +5,3 @@ cryptography
 bcrypt
 groq
 Pillow
-fastapi
-uvicorn
-pydantic
