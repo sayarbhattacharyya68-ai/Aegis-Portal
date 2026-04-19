@@ -1,0 +1,16 @@
+# Ignore local database and keys
+vault.db
+secret.key
+.env
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+
+# Ignore user uploads (Do not commit user transaction screenshots to GitHub)
+audit_screenshots/
+
+# Ignore SQLite temp files
+*.db-journal
+*.db-wal
+*.db-shm
