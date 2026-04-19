@@ -7,7 +7,6 @@ secret.key
 build/
 dist/
 *.spec
-run_app.py
 
 # Ignore Python cache
 __pycache__/
