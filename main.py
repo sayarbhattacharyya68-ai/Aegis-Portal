@@ -137,11 +137,13 @@ st.markdown("""
         color: #E2E8F0;
     }
 
-    /* ── HIDE STREAMLIT BRANDING (FOR PWA) ── */
-    header {visibility: hidden;}
-    footer {visibility: hidden;}
-    #MainMenu {visibility: hidden;}
-    .stDeployButton {display:none;}
+    /* ── TOTAL BRANDING PURGE (FOR PWA) ── */
+    footer {display: none !important;}
+    header {display: none !important;}
+    #MainMenu {display: none !important;}
+    .stDeployButton {display: none !important;}
+    [data-testid="stStatusWidget"] {display: none !important;}
+    #stDecoration {display: none !important;}
     
     h1, h2, h3, h4, h5, h6 {
         color: #FFFFFF !important;
