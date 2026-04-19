@@ -69,12 +69,13 @@ def inject_pwa():
     icon_512 = get_file_b64("icon-512.png")
     
     manifest = {
-        "name": "Aegis-Portal",
-        "short_name": "Aegis",
-        "description": "Cyber-Physical Resilience Command Center",
+        "name": "AEGIS COMMAND CENTER",
+        "short_name": "AEGIS",
+        "description": "Zero-Knowledge Cyber-Physical Portal",
         "start_url": ".",
         "scope": ".",
         "display": "standalone",
+        "orientation": "portrait",
         "background_color": "#080D24",
         "theme_color": "#7064DF",
         "icons": [
@@ -87,10 +88,12 @@ def inject_pwa():
     
     st.markdown(f"""
         <link rel="manifest" href="data:application/manifest+json;base64,{manifest_b64}">
+        <meta name="mobile-web-app-capable" content="yes">
         <meta name="apple-mobile-web-app-capable" content="yes">
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-        <meta name="apple-mobile-web-app-title" content="Aegis-Portal">
+        <meta name="apple-mobile-web-app-title" content="AEGIS">
         <link rel="apple-touch-icon" href="data:image/png;base64,{icon_192}">
+        <meta name="theme-color" content="#7064DF">
         <script>
             if ('serviceWorker' in navigator) {{
                 window.addEventListener('load', function() {{
