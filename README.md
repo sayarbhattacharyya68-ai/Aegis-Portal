@@ -321,7 +321,7 @@ CREATE TABLE security_events (
 
 ```toml
 GROQ_API_KEY = "gsk_your_actual_groq_api_key_here"
-ADMIN_KEY    = "Sayar_Admin_2026"
+ADMIN_KEY    = "######"
 ```
 
 > ⚠️ **Important:** Do not use GitHub Repository Secrets. The application reads from `st.secrets` first, then falls back to a local `.env` file for development. GitHub Actions secrets are not accessible to the Streamlit runtime.
