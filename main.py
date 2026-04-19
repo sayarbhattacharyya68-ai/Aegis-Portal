@@ -236,10 +236,6 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.user_email = None
 
-# The Volatile Master Cipher - Generated on load, destroyed on exit
-if "current_session_key" not in st.session_state:
-    st.session_state.current_session_key = Fernet.generate_key().decode()
-
 if "decrypted_shard" not in st.session_state:
     st.session_state.decrypted_shard = None
     
@@ -527,13 +523,16 @@ elif module == "🔮 AI Oracle":
         user = st.text_input("Identity Designation")
         pwd = st.text_input("Payload Cipher (Password)", type="password")
         
+        st.markdown("---")
+        master_key = st.text_input("Master Vault Key", type="password", help="The single Master Key you use to encrypt and decrypt all your shards.")
+        
         col1, col2 = st.columns([1, 3])
         with col1:
             analyze_btn = st.button("🚀 Analyze & Archive", type="primary", use_container_width=True)
             
         if analyze_btn:
-            if not site or not user or not pwd:
-                st.warning("🚨 All parameters are required for Oracle consultation.")
+            if not site or not user or not pwd or not master_key:
+                st.warning("🚨 All parameters (including your Master Vault Key) are required for Oracle consultation.")
             elif credits > 0:
                 if use_credit(st.session_state.user_email):
                     with st.spinner("Oracle is performing entropy analysis..."):
@@ -547,13 +546,10 @@ elif module == "🔮 AI Oracle":
                         st.info(analysis)
                         
                         # 3. Archive to Vault
-                        save_account(st.session_state.user_email, site, user, pwd, st.session_state.current_session_key)
+                        save_account(st.session_state.user_email, site, user, pwd, master_key)
                         toast("shard_saved")
                         
-                        # 4. Display the Volatile Key once
-                        st.markdown("### 🛡️ Volatile Shard Key Generated")
-                        st.warning("⚠️ CRITICAL: Copy and save this Master Cipher immediately. It will be permanently destroyed when you sever the connection.")
-                        st.code(st.session_state.current_session_key, language="text")
+                        st.success("✅ Shard successfully encrypted with your Master Vault Key.")
             else: 
                 notify("no_credits", notify_type="error")
 

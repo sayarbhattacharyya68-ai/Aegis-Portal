@@ -9,11 +9,13 @@
 """
 
 import sqlite3
-import os
-import bcrypt
 import datetime
-from contextlib import contextmanager
+import bcrypt
+import base64
 from cryptography.fernet import Fernet, InvalidToken
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from contextlib import contextmanager
 
 # ─────────────────────────────────────────────
 #  CONNECTION MANAGER
@@ -219,9 +221,21 @@ def get_all_users():
 #  ENCRYPTED SHARD VAULT (ZERO-KNOWLEDGE)
 # ─────────────────────────────────────────────
 
-def save_account(owner, site, user, pwd, user_key):
+def get_fernet_key(user_password, salt_string):
+    """Derive a valid 32-byte Fernet key from a human-readable password using PBKDF2."""
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt_string.encode(),
+        iterations=100000,
+    )
+    return base64.urlsafe_b64encode(kdf.derive(user_password.encode()))
+
+
+def save_account(owner, site, user, pwd, user_provided_key):
     """Encrypt and store a credential shard. Key is NEVER persisted."""
-    cipher = Fernet(user_key.encode())
+    fernet_key = get_fernet_key(user_provided_key, owner)
+    cipher = Fernet(fernet_key)
     enc_pwd = cipher.encrypt(pwd.encode()).decode()
     with get_db() as conn:
         conn.execute(
@@ -234,7 +248,8 @@ def save_account(owner, site, user, pwd, user_key):
 def fetch_accounts(owner, user_provided_key):
     """Decrypt and retrieve all shards for an identity. Returns None on key mismatch."""
     try:
-        cipher = Fernet(user_provided_key.encode())
+        fernet_key = get_fernet_key(user_provided_key, owner)
+        cipher = Fernet(fernet_key)
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -266,19 +281,25 @@ def fetch_accounts(owner, user_provided_key):
         return None
 
 
-def update_account(account_id, new_user, new_pwd, user_key):
-    """Re-encrypt and update a specific shard."""
-    try:
-        cipher = Fernet(user_key.encode())
-        enc_pwd = cipher.encrypt(new_pwd.encode()).decode()
-        with get_db() as conn:
-            conn.execute(
-                "UPDATE accounts SET username = ?, password = ? WHERE id = ?",
-                (new_user, enc_pwd, account_id)
-            )
-        return True
-    except Exception:
-        return False
+def update_account(account_id, new_username, new_password, user_provided_key):
+    """Re-encrypt and update an existing shard."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT owner_email FROM accounts WHERE id=?", (account_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False
+            
+        fernet_key = get_fernet_key(user_provided_key, row[0])
+        cipher = Fernet(fernet_key)
+        enc_pwd = cipher.encrypt(new_password.encode()).decode()
+        
+        cursor.execute(
+            "UPDATE accounts SET username=?, password=? WHERE id=?",
+            (new_username, enc_pwd, account_id)
+        )
+    log_security_event("VAULT_WRITE", row[0], "Shard parameters updated")
+    return True
 
 
 def delete_account(account_id):
