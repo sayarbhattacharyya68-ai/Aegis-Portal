@@ -267,10 +267,15 @@ if not st.session_state.logged_in:
                 
                 if submit:
                     status = authenticate_user(email, pw)
-                    if status == 'active':
+                    if status in ['active', 'warned', 'lockdown']:
                         st.session_state.logged_in = True
                         st.session_state.user_email = email
-                        notify("login_success", notify_type="success")
+                        if status == 'warned':
+                            notify("login_warned", notify_type="warning")
+                        elif status == 'lockdown':
+                            notify("login_lockdown", notify_type="error")
+                        else:
+                            notify("login_success", notify_type="success")
                         st.rerun()
                     elif status == 'banned':
                         notify("login_banned", notify_type="error")
@@ -307,6 +312,12 @@ if current_status == 'banned':
     trigger_lockdown("Identity revocation detected during active session.")
     st.rerun()
 
+if current_status == 'warned':
+    st.warning("⚠️ **Administrator Warning**: Your recent activity has been flagged. Please adhere to security protocols.", icon="⚠️")
+
+if current_status == 'lockdown':
+    st.error("🔒 **LOCKDOWN ENGAGED**\n\nYour vault access is frozen. Contact the Administrator immediately at **8910162728**.\n\nFailure to comply will result in permanent Identity Purge.", icon="🚨")
+
 # ─────────────────────────────────────────────
 #  6. THE COMMAND CENTER (SIDEBAR)
 # ─────────────────────────────────────────────
@@ -320,11 +331,15 @@ st.sidebar.metric("Ether-Credits", f"{credits} 💎")
 st.sidebar.markdown("---")
 
 # Navigation
-module = st.sidebar.radio(
-    "Active Module", 
-    ["📂 Archive Vault", "🔮 AI Oracle", "🔋 Credit-Bay"],
-    label_visibility="collapsed"
-)
+if current_status != 'lockdown':
+    module = st.sidebar.radio(
+        "Active Module", 
+        ["📂 Archive Vault", "🔮 AI Oracle", "🔋 Credit-Bay"],
+        label_visibility="collapsed"
+    )
+else:
+    module = None
+    st.sidebar.error("Modules Locked")
 
 st.sidebar.markdown("---")
 
@@ -385,12 +400,21 @@ with st.sidebar.expander("⚙️ Admin Terminal", expanded=False):
                 notify_admin_action(f"Dispensed {gem_amt} EC", target)
                 st.rerun()
 
-            col_a, col_b = st.columns(2)
-            if col_a.button("⛔ BAN", use_container_width=True): 
-                update_user_status(target, 'banned')
-                st.rerun()
-            if col_b.button("✅ RESTORE", use_container_width=True): 
+            st.markdown("### Warden Enforcement")
+            w1, w2 = st.columns(2)
+            if w1.button("🟢 Set to Active", use_container_width=True):
                 update_user_status(target, 'active')
+                st.rerun()
+            if w2.button("🟡 Issue Warning", use_container_width=True):
+                update_user_status(target, 'warned')
+                st.rerun()
+                
+            w3, w4 = st.columns(2)
+            if w3.button("🔒 Engage Lockdown", use_container_width=True):
+                update_user_status(target, 'lockdown')
+                st.rerun()
+            if w4.button("💥 Purge Identity", use_container_width=True, type="primary"):
+                update_user_status(target, 'banned')
                 st.rerun()
 
         with admin_tab2:

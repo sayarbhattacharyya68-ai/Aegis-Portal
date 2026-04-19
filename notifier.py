@@ -45,8 +45,10 @@ EVENT_TYPES = {
 IMMERSIVE_MESSAGES = {
     # ── Authentication ──
     "login_success":        "Identity Shard successfully synchronized. Welcome to the Command Center.",
+    "login_warned":         "⚠️ Identity Synchronized, but you are currently under Shard Warden observation.",
+    "login_lockdown":       "🔒 LOCKDOWN ENGAGED. Vault access is frozen by Administrator override.",
     "login_failed":         "Cipher verification denied. The presented credentials do not match any known identity.",
-    "login_banned":         "⛔ IDENTITY REVOKED — This shard has been permanently deactivated by the Shard Warden.",
+    "login_banned":         "⛔ IDENTITY REVOKED — This shard has been permanently purged from the system.",
     "register_success":     "New Identity Shard forged and committed to the vault. Your digital presence has been established.",
     "register_exists":      "Identity collision detected. This designation already exists within the system.",
     

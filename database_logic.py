@@ -150,13 +150,37 @@ def check_status(email):
 
 
 def update_user_status(email, new_status):
-    """Update the standing of an identity shard (active/banned)."""
-    with get_db() as conn:
-        conn.execute("UPDATE users SET status = ? WHERE email = ?", (new_status, email))
-    
-    event_type = "IDENTITY_BANNED" if new_status == "banned" else "IDENTITY_RESTORED"
-    severity = "CRITICAL" if new_status == "banned" else "INFO"
-    log_security_event(event_type, email, f"Identity standing changed to: {new_status}", severity=severity)
+    """Admin function: Updates a user's standing (active, warned, lockdown) or completely purges them (banned)."""
+    try:
+        with get_db() as conn:
+            c = conn.cursor()
+            
+            if new_status == 'banned':
+                # The BAN Protocol: Total Data Destruction
+                c.execute("DELETE FROM accounts WHERE owner_email = ?", (email,))
+                c.execute("DELETE FROM transactions WHERE user_email = ?", (email,))
+                c.execute("DELETE FROM security_events WHERE target_email = ?", (email,))
+                c.execute("DELETE FROM users WHERE email = ?", (email,))
+                conn.commit()
+                # Log the ban event as a system event since the user no longer exists
+                log_security_event("IDENTITY_PURGED", "SYSTEM", f"Administrator completely purged identity: {email}", severity="CRITICAL")
+                return True
+                
+            # Otherwise, just update the status
+            c.execute("UPDATE users SET status = ? WHERE email = ?", (new_status, email))
+            conn.commit()
+            
+            if new_status == 'lockdown':
+                log_security_event("LOCKDOWN_ENGAGED", email, "Administrator engaged identity lockdown", severity="CRITICAL")
+            elif new_status == 'warned':
+                log_security_event("WARNING_ISSUED", email, "Administrator issued formal warning", severity="WARNING")
+            elif new_status == 'active':
+                log_security_event("IDENTITY_RESTORED", email, "Administrator restored identity to nominal status", severity="INFO")
+                
+            return True
+    except sqlite3.Error as e:
+        print(f"Error updating user status: {e}")
+        return False
 
 # ─────────────────────────────────────────────
 #  HEARTBEAT & PRESENCE
