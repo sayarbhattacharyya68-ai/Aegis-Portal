@@ -69,18 +69,18 @@ def inject_pwa():
     icon_512 = get_file_b64("icon-512.png")
     
     manifest = {
-        "name": "AEGIS COMMAND CENTER V3",
-        "short_name": "AEGIS-V3",
+        "name": "AEGIS PORTAL ELITE",
+        "short_name": "AGS-PORTAL",
         "description": "Zero-Knowledge Forensic Command Center",
-        "start_url": ".",
-        "scope": ".",
+        "start_url": "/?pwa=true",
+        "scope": "/",
         "display": "standalone",
         "orientation": "portrait",
         "background_color": "#080D24",
         "theme_color": "#7064DF",
         "icons": [
-            {"src": f"data:image/png;base64,{icon_192}", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
-            {"src": f"data:image/png;base64,{icon_512}", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+            {"src": f"data:image/png;base64,{icon_192}", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+            {"src": f"data:image/png;base64,{icon_512}", "sizes": "512x512", "type": "image/png", "purpose": "any"}
         ]
     }
     
@@ -97,7 +97,7 @@ def inject_pwa():
         <script>
             if ('serviceWorker' in navigator) {{
                 window.addEventListener('load', function() {{
-                    navigator.serviceWorker.register('./sw.js').then(function(registration) {{
+                    navigator.serviceWorker.register('./sw.js?v=2').then(function(registration) {{
                         console.log('ServiceWorker registration successful');
                     }}, function(err) {{
                         console.log('ServiceWorker registration failed: ', err);
