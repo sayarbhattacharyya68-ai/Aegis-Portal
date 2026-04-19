@@ -1,13 +1,25 @@
-self.addEventListener('install', function(event) {
-    console.log('[Service Worker] Installing Service Worker ...', event);
+const CACHE_NAME = 'aegis-v2';
+const STATIC_ASSETS = ['/', '/manifest.json'];
+
+self.addEventListener('install', event => {
+    event.waitUntil(
+        caches.open(CACHE_NAME).then(cache => cache.addAll(STATIC_ASSETS))
+    );
+    self.skipWaiting();
 });
 
-self.addEventListener('activate', function(event) {
-    console.log('[Service Worker] Activating Service Worker ....', event);
-    return self.clients.claim();
+self.addEventListener('activate', event => {
+    event.waitUntil(
+        caches.keys().then(keys =>
+            Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+        )
+    );
+    self.clients.claim();
 });
 
-self.addEventListener('fetch', function(event) {
-    // Just a pass-through for Streamlit apps, allowing the Add to Home Screen prompt
-    event.respondWith(fetch(event.request));
+self.addEventListener('fetch', event => {
+    if (event.request.method !== 'GET') return;
+    event.respondWith(
+        fetch(event.request).catch(() => caches.match(event.request))
+    );
 });

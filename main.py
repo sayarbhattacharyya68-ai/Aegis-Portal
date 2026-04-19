@@ -102,12 +102,13 @@ def inject_pwa():
             manifestLink.href = 'data:application/manifest+json;base64,{manifest_b64}';
             document.getElementsByTagName('head')[0].appendChild(manifestLink);
         </script>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
         <meta name="mobile-web-app-capable" content="yes">
         <meta name="apple-mobile-web-app-capable" content="yes">
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
         <meta name="apple-mobile-web-app-title" content="AEGIS">
         <link rel="apple-touch-icon" href="data:image/png;base64,{icon_192}">
-        <meta name="theme-color" content="#7064DF">
+        <meta name="theme-color" content="#080D24">
         <script>
             if ('serviceWorker' in navigator) {{
                 window.addEventListener('load', function() {{
@@ -175,13 +176,33 @@ st.markdown("""
         border: 1px solid rgba(148, 251, 171, 0.2);
     }
 
-    /* ── MOBILE OPTIMIZATION ── */
+    /* ── MOBILE OPTIMIZATION (PATH 1) ── */
     @media (max-width: 768px) {
+        .stApp { padding: 0 !important; }
         [data-testid="stSidebar"] {
             display: none !important;
         }
         .main .block-container {
             padding-bottom: 100px !important;
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
+        }
+        
+        /* Larger touch targets */
+        .stButton > button {
+            min-height: 48px !important;
+            font-size: 16px !important;
+        }
+        
+        .stTextInput > div > div > input, .stNumberInput > div > div > input {
+            font-size: 16px !important; /* Prevents iOS zoom on focus */
+            min-height: 44px !important;
+        }
+        
+        /* Full-width columns on mobile */
+        [data-testid="column"] {
+            width: 100% !important;
+            flex: 1 1 100% !important;
         }
     }
 
