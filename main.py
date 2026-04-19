@@ -69,9 +69,9 @@ def inject_pwa():
     icon_512 = get_file_b64("icon-512.png")
     
     manifest = {
-        "name": "AEGIS COMMAND CENTER",
-        "short_name": "AEGIS",
-        "description": "Zero-Knowledge Cyber-Physical Portal",
+        "name": "AEGIS COMMAND CENTER V3",
+        "short_name": "AEGIS-V3",
+        "description": "Zero-Knowledge Forensic Command Center",
         "start_url": ".",
         "scope": ".",
         "display": "standalone",
@@ -307,10 +307,10 @@ if not st.session_state.logged_in:
         t1, t2 = st.tabs(["Link Identity", "Forge Shard"])
         
         with t1:
-            with st.form("login_form"):
-                email = st.text_input("Identity Designation (Email)")
-                pw = st.text_input("Access Cipher", type="password")
-                submit = st.form_submit_button("Establish Connection", type="primary")
+            with st.container():
+                email = st.text_input("Identity Designation (Email)", key="login_email")
+                pw = st.text_input("Access Cipher", type="password", key="login_pw")
+                submit = st.button("Establish Connection", type="primary", use_container_width=True)
                 
                 if submit:
                     if not is_valid_email(email):
@@ -333,10 +333,10 @@ if not st.session_state.logged_in:
                             notify("login_failed", notify_type="error")
                         
         with t2:
-            with st.form("register_form"):
-                n_email = st.text_input("New Identity Designation")
-                n_pw = st.text_input("New Access Cipher", type="password")
-                submit = st.form_submit_button("Forge Identity Shard")
+            with st.container():
+                n_email = st.text_input("New Identity Designation", key="reg_email")
+                n_pw = st.text_input("New Access Cipher", type="password", key="reg_pw")
+                submit = st.button("Forge Identity Shard", use_container_width=True)
                 
                 if submit:
                     if not is_valid_email(n_email):
