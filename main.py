@@ -56,15 +56,19 @@ st.set_page_config(
 
 # Inject PWA Manifest & Service Worker
 st.markdown("""
-    <link rel="manifest" href="/app/static/manifest.json">
+    <link rel="manifest" href="./manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Aegis-Portal">
+    <link rel="apple-touch-icon" href="./icon-192.png">
     <script>
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/app/static/sw.js')
-            .then(function(registration) {
-                console.log('Registration successful, scope is:', registration.scope);
-            })
-            .catch(function(error) {
-                console.log('Service worker registration failed, error:', error);
+            window.addEventListener('load', function() {
+                navigator.serviceWorker.register('./sw.js').then(function(registration) {
+                    console.log('ServiceWorker registration successful');
+                }, function(err) {
+                    console.log('ServiceWorker registration failed: ', err);
+                });
             });
         }
     </script>
