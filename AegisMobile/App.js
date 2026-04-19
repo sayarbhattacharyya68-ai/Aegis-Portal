@@ -1,74 +1,144 @@
-import React, { useRef, useState } from 'react';
-import { StyleSheet, View, ActivityIndicator, StatusBar, BackHandler } from 'react-native';
+import React, { useState, useRef } from 'react';
+import { 
+  StyleSheet, 
+  View, 
+  ActivityIndicator, 
+  SafeAreaView, 
+  StatusBar,
+  BackHandler,
+  Platform,
+  Alert,
+  Text,
+  TouchableOpacity
+} from 'react-native';
 import { WebView } from 'react-native-webview';
 
-const AEGIS_URL = 'https://aegis-app-bakaywhetrffizyxtq7thm.streamlit.app/';
+// ── CONFIGURATION ──
+const AEGIS_URL = 'https://sayarbhattacharyya68-ai-aegis-portal-main-pwa-install.streamlit.app/';
 
 export default function App() {
   const webViewRef = useRef(null);
   const [loading, setLoading] = useState(true);
-  const [canGoBack, setCanGoBack] = useState(false);
+  const [error, setError] = useState(false);
 
-  // Android hardware back button support
+  // Handle Android Hardware Back Button
   React.useEffect(() => {
     const onBackPress = () => {
-      if (canGoBack && webViewRef.current) {
+      if (webViewRef.current) {
         webViewRef.current.goBack();
-        return true;
+        return true; // Prevent default behavior
       }
       return false;
     };
+
     BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => BackHandler.removeEventListener('hardwareBackPress', onBackPress);
-  }, [canGoBack]);
+  }, []);
+
+  const handleReload = () => {
+    setError(false);
+    setLoading(true);
+    webViewRef.current?.reload();
+  };
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#080D24" />
-      
-      {loading && (
-        <View style={styles.loader}>
-          <ActivityIndicator size="large" color="#7064DF" />
-        </View>
-      )}
       
       <WebView
         ref={webViewRef}
         source={{ uri: AEGIS_URL }}
         style={styles.webview}
+        onLoadStart={() => setLoading(true)}
         onLoadEnd={() => setLoading(false)}
-        onNavigationStateChange={navState => setCanGoBack(navState.canGoBack)}
-        // Inject CSS to hide Streamlit branding & optimize for mobile
-        injectedJavaScript={`
-          const style = document.createElement('style');
-          style.textContent = \`
-            #MainMenu, footer, .stDeployButton, [data-testid="stHeader"] { display: none !important; }
-            @media (max-width: 768px) {
-              .stButton > button { min-height: 48px; }
-              input { font-size: 16px !important; }
-            }
-          \`;
-          document.head.appendChild(style);
-          true;
-        `}
+        onError={() => setError(true)}
         javaScriptEnabled={true}
         domStorageEnabled={true}
-        startInLoadingState={true}
         allowsBackForwardNavigationGestures={true}
-        sharedCookiesEnabled={true}
-        allowFileAccess={true}
-        allowFileAccessFromFileURLs={true}
+        pullToRefreshEnabled={true}
+        // User Agent spoofing to ensure mobile layout
+        userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36 AegisMobile/1.0"
       />
-    </View>
+
+      {/* Loading Overlay */}
+      {loading && !error && (
+        <View style={styles.overlay}>
+          <ActivityIndicator size="large" color="#94FBAB" />
+          <Text style={styles.loadingText}>SYNCHRONIZING WITH AEGIS...</Text>
+        </View>
+      )}
+
+      {/* Error State */}
+      {error && (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorIcon}>🚨</Text>
+          <Text style={styles.errorTitle}>CONNECTION SEVERED</Text>
+          <Text style={styles.errorMsg}>The Secure Portal is unreachable. Check your uplink.</Text>
+          <TouchableOpacity style={styles.retryBtn} onPress={handleReload}>
+            <Text style={styles.retryText}>RE-ESTABLISH CONNECTION</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#080D24' },
-  webview: { flex: 1 },
-  loader: {
-    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-    justifyContent: 'center', alignItems: 'center',
-    backgroundColor: '#080D24', zIndex: 10,
+  container: {
+    flex: 1,
+    backgroundColor: '#080D24',
   },
+  webview: {
+    flex: 1,
+    backgroundColor: '#080D24',
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#080D24',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  loadingText: {
+    color: '#94FBAB',
+    marginTop: 20,
+    fontSize: 10,
+    letter-spacing: 2,
+    fontWeight: '700',
+  },
+  errorContainer: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#080D24',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+    zIndex: 20,
+  },
+  errorIcon: {
+    fontSize: 50,
+    marginBottom: 20,
+  },
+  errorTitle: {
+    color: '#FF6B6B',
+    fontSize: 20,
+    fontWeight: '800',
+    marginBottom: 10,
+  },
+  errorMsg: {
+    color: '#A0AEC0',
+    textAlign: 'center',
+    marginBottom: 30,
+    lineHeight: 22,
+  },
+  retryBtn: {
+    backgroundColor: '#94FBAB',
+    paddingVertical: 15,
+    paddingHorizontal: 30,
+    borderRadius: 8,
+  },
+  retryText: {
+    color: '#080D24',
+    fontWeight: '800',
+    fontSize: 12,
+  }
 });

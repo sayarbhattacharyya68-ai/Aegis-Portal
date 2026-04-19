@@ -121,145 +121,71 @@ def inject_pwa():
             }}
         </script>
 
-        <!-- ── AEGIS MOBILE INSTALL BUTTON ── -->
+        <!-- ── AEGIS NATIVE MOBILE UPGRADE ── -->
         <style>
-            #aegis-install-container {{
+            #aegis-mobile-card {{
                 display: none;
                 position: fixed;
                 bottom: 20px;
                 left: 50%;
                 transform: translateX(-50%);
                 z-index: 9999999;
-                width: calc(100% - 40px);
-                max-width: 420px;
+                width: calc(100% - 30px);
+                max-width: 400px;
+                background: rgba(8, 13, 36, 0.95);
+                backdrop-filter: blur(20px);
+                border: 1px solid rgba(148, 251, 171, 0.3);
+                border-radius: 20px;
+                padding: 20px;
+                box-shadow: 0 10px 40px rgba(0,0,0,0.6);
             }}
             @media (max-width: 768px) {{
-                #aegis-install-container {{
-                    display: block;
-                }}
+                #aegis-mobile-card {{ display: block; }}
             }}
-            /* Hide if already installed */
-            @media (display-mode: standalone) {{
-                #aegis-install-container {{ display: none !important; }}
-            }}
-            #aegis-install-btn {{
+            #aegis-download-btn {{
                 width: 100%;
                 background: linear-gradient(135deg, #7064DF 0%, #94FBAB 100%);
                 color: #080D24;
                 border: none;
-                border-radius: 16px;
-                padding: 16px 24px;
+                border-radius: 12px;
+                padding: 14px;
+                font-weight: 800;
+                font-size: 0.9rem;
                 cursor: pointer;
-                box-shadow: 0 8px 32px rgba(112, 100, 223, 0.45), 0 0 0 1px rgba(148,251,171,0.3);
-                font-family: 'Inter', sans-serif;
-                font-size: 1rem;
-                font-weight: 700;
-                letter-spacing: 0.3px;
-                transition: transform 0.2s, box-shadow 0.2s;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                gap: 12px;
+                margin-top: 15px;
+                transition: transform 0.2s;
+                text-decoration: none;
+                display: block;
+                text-align: center;
             }}
-            #aegis-install-btn:active {{
-                transform: scale(0.97);
-            }}
-            #aegis-install-icon {{
-                font-size: 1.75rem;
-                line-height: 1;
-            }}
-            #aegis-install-text {{
-                display: flex;
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 2px;
-            }}
-            #aegis-install-title {{
-                font-size: 0.95rem;
-                font-weight: 700;
-            }}
-            #aegis-install-subtitle {{
-                font-size: 0.7rem;
-                font-weight: 400;
-                opacity: 0.75;
+            #aegis-dismiss-btn {{
+                background: transparent;
+                color: #A0AEC0;
+                border: none;
+                font-size: 0.75rem;
+                margin-top: 12px;
+                cursor: pointer;
+                width: 100%;
+                text-align: center;
             }}
         </style>
 
-        <div id="aegis-install-container">
-            <button id="aegis-install-btn">
-                <span id="aegis-install-icon">📲</span>
-                <div id="aegis-install-text">
-                    <span id="aegis-install-title">Install Aegis Mobile App</span>
-                    <span id="aegis-install-subtitle">Add to your home screen</span>
+        <div id="aegis-mobile-card">
+            <div style="display: flex; align-items: center; gap: 15px;">
+                <span style="font-size: 2.5rem;">🛡️</span>
+                <div>
+                    <h4 style="margin: 0; color: #FFFFFF; font-size: 1.1rem;">Aegis Mobile Native</h4>
+                    <p style="margin: 0; color: #94FBAB; font-size: 0.75rem;">V1.0 ALPHA READY FOR UPLINK</p>
                 </div>
-            </button>
+            </div>
+            <ul style="color: #A0AEC0; font-size: 0.75rem; padding-left: 20px; margin: 15px 0;">
+                <li>Full Screen Immersive Experience</li>
+                <li>Secure Biometric Readiness</li>
+                <li>Persistent Identity Cache</li>
+            </ul>
+            <a href="https://github.com/sayarbhattacharyya68-ai/Aegis-Portal" id="aegis-download-btn">🚀 DOWNLOAD NATIVE APK</a>
+            <button id="aegis-dismiss-btn" onclick="document.getElementById('aegis-mobile-card').style.display='none'">Maybe Later</button>
         </div>
-
-        <script>
-        (function() {{
-            var deferredPrompt = null;
-            var btn = document.getElementById('aegis-install-btn');
-            var container = document.getElementById('aegis-install-container');
-
-            // Don't show if already in standalone mode
-            if (window.matchMedia('(display-mode: standalone)').matches) {{
-                return;
-            }}
-
-            // Check if dismissed before
-            if (localStorage.getItem('aegis-install-dismissed') === 'true') {{
-                container.style.display = 'none';
-                return;
-            }}
-
-            // Capture the beforeinstallprompt event
-            window.addEventListener('beforeinstallprompt', function(e) {{
-                e.preventDefault();
-                deferredPrompt = e;
-                console.log('PWA install prompt captured');
-            }});
-
-            // Handle button click
-            btn.addEventListener('click', function() {{
-                if (deferredPrompt) {{
-                    // Native install available (Chrome/Edge on Android)
-                    deferredPrompt.prompt();
-                    deferredPrompt.userChoice.then(function(result) {{
-                        if (result.outcome === 'accepted') {{
-                            container.style.display = 'none';
-                            localStorage.setItem('aegis-install-dismissed', 'true');
-                        }}
-                        deferredPrompt = null;
-                    }});
-                }} else {{
-                    // Fallback instructions for iOS Safari and other browsers
-                    var isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
-                    var title = document.getElementById('aegis-install-title');
-                    var subtitle = document.getElementById('aegis-install-subtitle');
-                    
-                    if (isIOS) {{
-                        title.textContent = 'iOS: Tap Share Button ⬆️';
-                        subtitle.textContent = 'Then tap "Add to Home Screen"';
-                    }} else {{
-                        title.textContent = 'Install from Browser Menu';
-                        subtitle.textContent = 'Look for "Install App" or "Add to Home Screen"';
-                    }}
-                    
-                    // Revert after 5 seconds
-                    setTimeout(function() {{
-                        title.textContent = 'Install Aegis Mobile App';
-                        subtitle.textContent = 'Add to your home screen';
-                    }}, 5000);
-                }}
-            }});
-
-            // Hide when installed
-            window.addEventListener('appinstalled', function() {{
-                container.style.display = 'none';
-                localStorage.setItem('aegis-install-dismissed', 'true');
-            }});
-        }})();
-        </script>
     """, unsafe_allow_html=True)
 
 inject_pwa()

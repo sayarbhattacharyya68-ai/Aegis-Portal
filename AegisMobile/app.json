@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "Aegis Portal",
+    "slug": "aegis-portal",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#080D24"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.aegis.portal"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#080D24"
+      },
+      "package": "com.aegis.portal"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}
