@@ -1,9 +1,9 @@
 import React, { useState, useRef } from 'react';
-import { 
-  StyleSheet, 
-  View, 
-  ActivityIndicator, 
-  SafeAreaView, 
+import {
+  StyleSheet,
+  View,
+  ActivityIndicator,
+  SafeAreaView,
   StatusBar,
   BackHandler,
   Platform,
@@ -44,7 +44,7 @@ export default function App() {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#080D24" />
-      
+
       <WebView
         ref={webViewRef}
         source={{ uri: AEGIS_URL }}
@@ -103,7 +103,7 @@ const styles = StyleSheet.create({
     color: '#94FBAB',
     marginTop: 20,
     fontSize: 10,
-    letter-spacing: 2,
+    letterSpacing: 2,
     fontWeight: '700',
   },
   errorContainer: {
