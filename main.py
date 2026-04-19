@@ -12,6 +12,7 @@ import streamlit as st
 import os
 import pandas as pd
 import datetime
+import re
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 
@@ -36,6 +37,11 @@ from notifier import (
 
 # Load local environment variables (if any)
 load_dotenv()
+
+def is_valid_email(email):
+    """Simple regex for email validation."""
+    pattern = r'^[\w\.-]+@[\w\.-]+\.\w+$'
+    return re.match(pattern, email) is not None
 
 # ─────────────────────────────────────────────
 #  1. CORE CONFIGURATION
@@ -262,21 +268,24 @@ if not st.session_state.logged_in:
                 submit = st.form_submit_button("Establish Connection", type="primary")
                 
                 if submit:
-                    status = authenticate_user(email, pw)
-                    if status in ['active', 'warned', 'lockdown']:
-                        st.session_state.logged_in = True
-                        st.session_state.user_email = email
-                        if status == 'warned':
-                            notify("login_warned", notify_type="warning")
-                        elif status == 'lockdown':
-                            notify("login_lockdown", notify_type="error")
-                        else:
-                            notify("login_success", notify_type="success")
-                        st.rerun()
-                    elif status == 'banned':
-                        notify("login_banned", notify_type="error")
+                    if not is_valid_email(email):
+                        st.error("🚨 Invalid Identity Format. Please use a valid email address.")
                     else:
-                        notify("login_failed", notify_type="error")
+                        status = authenticate_user(email, pw)
+                        if status in ['active', 'warned', 'lockdown']:
+                            st.session_state.logged_in = True
+                            st.session_state.user_email = email
+                            if status == 'warned':
+                                notify("login_warned", notify_type="warning")
+                            elif status == 'lockdown':
+                                notify("login_lockdown", notify_type="error")
+                            else:
+                                notify("login_success", notify_type="success")
+                            st.rerun()
+                        elif status == 'banned':
+                            notify("login_banned", notify_type="error")
+                        else:
+                            notify("login_failed", notify_type="error")
                         
         with t2:
             with st.form("register_form"):
@@ -285,7 +294,9 @@ if not st.session_state.logged_in:
                 submit = st.form_submit_button("Forge Identity Shard")
                 
                 if submit:
-                    if len(n_pw) < 8:
+                    if not is_valid_email(n_email):
+                        st.error("🚨 Invalid Identity Format. Shards must be forged using a valid email address.")
+                    elif len(n_pw) < 8:
                         st.error("🚨 Cipher must be at least 8 characters.")
                     elif create_user(n_email, n_pw):
                         notify("register_success", notify_type="success")
