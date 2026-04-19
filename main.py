@@ -176,14 +176,11 @@ st.markdown("""
         border: 1px solid rgba(148, 251, 171, 0.2);
     }
 
-    /* ── MOBILE OPTIMIZATION (PATH 1) ── */
+    /* ── MOBILE OPTIMIZATION ── */
     @media (max-width: 768px) {
         .stApp { padding: 0 !important; }
-        [data-testid="stSidebar"] {
-            display: none !important;
-        }
         .main .block-container {
-            padding-bottom: 100px !important;
+            padding-bottom: 2rem !important;
             padding-left: 1rem !important;
             padding-right: 1rem !important;
         }
@@ -431,81 +428,13 @@ st.sidebar.metric("Ether-Credits", f"{credits} 💎")
 st.sidebar.markdown(f"**Identity:** `{st.session_state.user_email}`")
 st.sidebar.markdown("---")
 
-# Navigation (Unified for Desktop/Mobile)
-if "module_selection" not in st.session_state:
-    st.session_state.module_selection = "📂 Archive Vault"
-
+# Navigation
 if current_status != 'lockdown':
-    # 1. Desktop Sidebar Navigation (Hidden on Mobile via CSS)
     module = st.sidebar.radio(
         "Active Module", 
         ["📂 Archive Vault", "🔮 AI Oracle", "🔋 Credit-Bay"],
-        index=["📂 Archive Vault", "🔮 AI Oracle", "🔋 Credit-Bay"].index(st.session_state.module_selection),
-        label_visibility="collapsed",
-        key="sidebar_radio"
+        label_visibility="collapsed"
     )
-    st.session_state.module_selection = module
-    
-    # 2. Mobile Bottom Navigation (Visible only on Mobile via CSS injection)
-    st.markdown("""
-        <style>
-        .mobile-nav {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            background: rgba(8, 13, 36, 0.95);
-            backdrop-filter: blur(15px);
-            display: none;
-            justify-content: space-around;
-            align-items: center;
-            padding: 12px 0;
-            border-top: 1px solid rgba(148, 251, 171, 0.2);
-            z-index: 999999;
-            box-shadow: 0 -10px 30px rgba(0,0,0,0.5);
-        }
-        @media (max-width: 768px) {
-            .mobile-nav { display: flex; }
-        }
-        .nav-item {
-            text-align: center;
-            color: #A0AEC0;
-            font-size: 0.7rem;
-            text-decoration: none;
-            flex: 1;
-            transition: all 0.3s;
-        }
-        .nav-item.active {
-            color: #94FBAB;
-        }
-        .nav-icon {
-            font-size: 1.5rem;
-            margin-bottom: 2px;
-            display: block;
-        }
-        </style>
-        <div class="mobile-nav">
-            <a href="?module=vault" class="nav-item">
-                <span class="nav-icon">📂</span>Vault
-            </a>
-            <a href="?module=oracle" class="nav-item">
-                <span class="nav-icon">🔮</span>Oracle
-            </a>
-            <a href="?module=credits" class="nav-item">
-                <span class="nav-icon">🔋</span>Credits
-            </a>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    # URL Query Parameter Sync for Mobile Buttons
-    query_params = st.query_params
-    if "module" in query_params:
-        target = query_params["module"]
-        if target == "vault": st.session_state.module_selection = "📂 Archive Vault"
-        elif target == "oracle": st.session_state.module_selection = "🔮 AI Oracle"
-        elif target == "credits": st.session_state.module_selection = "🔋 Credit-Bay"
-    
-    module = st.session_state.module_selection
 else:
     module = None
     st.sidebar.error("Modules Locked")
