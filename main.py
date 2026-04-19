@@ -87,7 +87,21 @@ def inject_pwa():
     manifest_b64 = base64.b64encode(json.dumps(manifest).encode()).decode()
     
     st.markdown(f"""
-        <link rel="manifest" href="data:application/manifest+json;base64,{manifest_b64}">
+        <script>
+            // FORCE REMOVE STREAMLIT DEFAULT MANIFEST
+            var links = document.getElementsByTagName('link');
+            for (var i = 0; i < links.length; i++) {{
+                if (links[i].rel === 'manifest') {{
+                    links[i].parentNode.removeChild(links[i]);
+                }}
+            }}
+            
+            // INJECT AEGIS MANIFEST
+            var manifestLink = document.createElement('link');
+            manifestLink.rel = 'manifest';
+            manifestLink.href = 'data:application/manifest+json;base64,{manifest_b64}';
+            document.getElementsByTagName('head')[0].appendChild(manifestLink);
+        </script>
         <meta name="mobile-web-app-capable" content="yes">
         <meta name="apple-mobile-web-app-capable" content="yes">
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -97,7 +111,7 @@ def inject_pwa():
         <script>
             if ('serviceWorker' in navigator) {{
                 window.addEventListener('load', function() {{
-                    navigator.serviceWorker.register('./sw.js?v=2').then(function(registration) {{
+                    navigator.serviceWorker.register('./sw.js?v=3').then(function(registration) {{
                         console.log('ServiceWorker registration successful');
                     }}, function(err) {{
                         console.log('ServiceWorker registration failed: ', err);
