@@ -110,9 +110,26 @@ def inject_pwa():
         <link rel="apple-touch-icon" href="data:image/png;base64,{icon_192}">
         <meta name="theme-color" content="#080D24">
         <script>
+            let deferredPrompt;
+            window.addEventListener('beforeinstallprompt', (e) => {
+                e.preventDefault();
+                deferredPrompt = e;
+                // Notify the Streamlit app that installation is possible
+                window.postMessage({type: 'pwa_install_ready'}, '*');
+            });
+
+            window.addEventListener('message', (event) => {
+                if (event.data.type === 'trigger_pwa_install' && deferredPrompt) {
+                    deferredPrompt.prompt();
+                    deferredPrompt.userChoice.then((choiceResult) => {
+                        deferredPrompt = null;
+                    });
+                }
+            });
+
             if ('serviceWorker' in navigator) {{
                 window.addEventListener('load', function() {{
-                    navigator.serviceWorker.register('./sw.js?v=3').then(function(registration) {{
+                    navigator.serviceWorker.register('./sw.js?v=4').then(function(registration) {{
                         console.log('ServiceWorker registration successful');
                     }}, function(err) {{
                         console.log('ServiceWorker registration failed: ', err);
@@ -426,6 +443,27 @@ st.sidebar.markdown("---")
 credits = get_user_credits(st.session_state.user_email)
 st.sidebar.metric("Ether-Credits", f"{credits} 💎")
 st.sidebar.markdown(f"**Identity:** `{st.session_state.user_email}`")
+st.sidebar.markdown("---")
+
+# ── MOBILE INSTALL BUTTON ──
+# This only appears if the browser supports PWA installation
+st.sidebar.markdown("""
+    <div id="install-btn-container" style="display: none; padding: 10px; border: 1px solid #94FBAB; border-radius: 10px; background: rgba(148, 251, 171, 0.1); margin-bottom: 20px;">
+        <p style="color: #94FBAB; font-size: 0.8rem; text-align: center; margin-bottom: 10px;">Mobile Portal Available</p>
+        <button onclick="window.parent.postMessage({type: 'trigger_pwa_install'}, '*')" 
+            style="width: 100%; background: #94FBAB; color: #080D24; border: none; padding: 8px; border-radius: 5px; font-weight: bold; cursor: pointer;">
+            📲 INSTALL MOBILE VERSION
+        </button>
+    </div>
+    <script>
+        window.addEventListener('message', (event) => {
+            if (event.data.type === 'pwa_install_ready') {
+                document.getElementById('install-btn-container').style.display = 'block';
+            }
+        });
+    </script>
+""", unsafe_allow_html=True)
+
 st.sidebar.markdown("---")
 
 # Navigation
