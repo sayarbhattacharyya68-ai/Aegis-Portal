@@ -108,25 +108,8 @@ def inject_pwa():
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
         <meta name="apple-mobile-web-app-title" content="AEGIS">
         <link rel="apple-touch-icon" href="data:image/png;base64,{icon_192}">
-        <meta name="theme-color" content="#080D24">
+        <meta name="theme-color" content="#7064DF">
         <script>
-            let deferredPrompt;
-            window.addEventListener('beforeinstallprompt', (e) => {{
-                e.preventDefault();
-                deferredPrompt = e;
-                // Notify the Streamlit app that installation is possible
-                window.postMessage({{type: 'pwa_install_ready'}}, '*');
-            }});
-
-            window.addEventListener('message', (event) => {{
-                if (event.data.type === 'trigger_pwa_install' && deferredPrompt) {{
-                    deferredPrompt.prompt();
-                    deferredPrompt.userChoice.then((choiceResult) => {{
-                        deferredPrompt = null;
-                    }});
-                }}
-            }});
-
             if ('serviceWorker' in navigator) {{
                 window.addEventListener('load', function() {{
                     navigator.serviceWorker.register('./sw.js?v=4').then(function(registration) {{
@@ -136,6 +119,163 @@ def inject_pwa():
                     }});
                 }});
             }}
+        </script>
+
+        <!-- ── AEGIS MOBILE INSTALL BUTTON ── -->
+        <style>
+            #aegis-install-btn {{
+                display: none;
+                position: fixed;
+                bottom: 80px;
+                right: 18px;
+                z-index: 9999999;
+                background: linear-gradient(135deg, #7064DF 0%, #94FBAB 100%);
+                color: #080D24;
+                border: none;
+                border-radius: 50px;
+                padding: 0;
+                width: 56px;
+                height: 56px;
+                cursor: pointer;
+                box-shadow: 0 4px 24px rgba(112, 100, 223, 0.55), 0 0 0 2px rgba(148,251,171,0.18);
+                align-items: center;
+                justify-content: center;
+                flex-direction: column;
+                font-family: 'Inter', sans-serif;
+                transition: transform 0.18s, box-shadow 0.18s, width 0.28s ease, border-radius 0.28s ease, padding 0.28s ease;
+                overflow: hidden;
+                white-space: nowrap;
+            }}
+            #aegis-install-btn.expanded {{
+                width: 210px;
+                border-radius: 50px;
+                padding: 0 20px 0 14px;
+                flex-direction: row;
+                gap: 10px;
+            }}
+            #aegis-install-btn:hover {{
+                transform: scale(1.05);
+                box-shadow: 0 6px 32px rgba(112, 100, 223, 0.75), 0 0 0 3px rgba(148,251,171,0.3);
+            }}
+            #aegis-install-btn:active {{
+                transform: scale(0.97);
+            }}
+            #aegis-install-icon {{
+                font-size: 1.5rem;
+                line-height: 1;
+                flex-shrink: 0;
+            }}
+            #aegis-install-label {{
+                display: none;
+                font-size: 0.78rem;
+                font-weight: 700;
+                letter-spacing: 0.5px;
+                color: #080D24;
+                text-align: left;
+                line-height: 1.25;
+            }}
+            #aegis-install-label span {{
+                display: block;
+                font-size: 0.65rem;
+                font-weight: 400;
+                opacity: 0.7;
+                margin-top: 1px;
+            }}
+            #aegis-install-btn.expanded #aegis-install-label {{
+                display: block;
+            }}
+            /* Only show on mobile/touch devices */
+            @media (min-width: 769px) and (pointer: fine) {{
+                #aegis-install-btn {{ display: none !important; }}
+            }}
+            /* Already installed as PWA — hide the button */
+            @media (display-mode: standalone) {{
+                #aegis-install-btn {{ display: none !important; }}
+            }}
+        </style>
+
+        <button id="aegis-install-btn" title="Install Aegis on your device">
+            <span id="aegis-install-icon">📲</span>
+            <span id="aegis-install-label">
+                Install Aegis
+                <span>Add to Home Screen</span>
+            </span>
+        </button>
+
+        <script>
+        (function() {{
+            var deferredPrompt = null;
+            var btn = document.getElementById('aegis-install-btn');
+            var expanded = false;
+
+            // Only operate outside standalone (already-installed) mode
+            if (window.matchMedia('(display-mode: standalone)').matches) return;
+
+            // Capture the browser's native install prompt
+            window.addEventListener('beforeinstallprompt', function(e) {{
+                e.preventDefault();
+                deferredPrompt = e;
+                // Show button only on mobile/touch
+                if (window.innerWidth <= 900 || navigator.maxTouchPoints > 0) {{
+                    btn.style.display = 'flex';
+                    // Expand briefly so the user notices it, then collapse
+                    setTimeout(function() {{
+                        btn.classList.add('expanded');
+                        btn.querySelector('#aegis-install-label').style.display = 'block';
+                        expanded = true;
+                        setTimeout(function() {{
+                            btn.classList.remove('expanded');
+                            expanded = false;
+                        }}, 3200);
+                    }}, 1200);
+                }}
+            }});
+
+            // Toggle expand on tap (so label is readable before install)
+            btn.addEventListener('click', function() {{
+                if (!expanded) {{
+                    btn.classList.add('expanded');
+                    btn.querySelector('#aegis-install-label').style.display = 'block';
+                    expanded = true;
+                    // After 2s of expanded state, trigger install
+                    setTimeout(function() {{
+                        triggerInstall();
+                    }}, 400);
+                }} else {{
+                    triggerInstall();
+                }}
+            }});
+
+            function triggerInstall() {{
+                if (!deferredPrompt) {{
+                    // iOS fallback — show instructions
+                    btn.querySelector('#aegis-install-icon').textContent = 'ℹ️';
+                    btn.querySelector('#aegis-install-label').innerHTML = 'Tap Share → Add to Home<span>iOS Safari only</span>';
+                    btn.classList.add('expanded');
+                    setTimeout(function() {{
+                        btn.classList.remove('expanded');
+                        btn.querySelector('#aegis-install-icon').textContent = '📲';
+                        expanded = false;
+                    }}, 4000);
+                    return;
+                }}
+                deferredPrompt.prompt();
+                deferredPrompt.userChoice.then(function(result) {{
+                    if (result.outcome === 'accepted') {{
+                        btn.style.display = 'none';
+                    }} else {{
+                        btn.classList.remove('expanded');
+                        expanded = false;
+                    }}
+                    deferredPrompt = null;
+                }});
+            }}
+
+            // Hide if user installs via other means
+            window.addEventListener('appinstalled', function() {{
+                btn.style.display = 'none';
+            }});
+        }})();
         </script>
     """, unsafe_allow_html=True)
 
