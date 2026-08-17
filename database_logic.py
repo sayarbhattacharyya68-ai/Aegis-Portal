@@ -139,9 +139,12 @@ def authenticate_user(email, password):
         row = cursor.fetchone()
 
     if row and bcrypt.checkpw(password.encode(), row[0]):
+        if row[1] == 'banned':
+            log_security_event("AUTH_FAILURE", email, "Banned identity attempted connection", severity="WARNING")
+            return 'banned'
         update_heartbeat(email)
         log_security_event("AUTH_SUCCESS", email, "Identity shard successfully synchronized")
-        return row[1]  # Returns 'active' or 'banned'
+        return row[1]  # Returns 'active', 'warned', 'lockdown', or 'banned'
     
     if row:
         log_security_event("AUTH_FAILURE", email, "Invalid cipher presented — access denied", severity="WARNING")
@@ -166,13 +169,13 @@ def update_user_status(email, new_status):
             c = conn.cursor()
             
             if new_status == 'banned':
-                # The BAN Protocol: Total Data Destruction
+                # The BAN Protocol: Purge encrypted data while marking status as banned to notify user upon login
                 c.execute("DELETE FROM accounts WHERE owner_email = ?", (email,))
                 c.execute("DELETE FROM transactions WHERE user_email = ?", (email,))
                 c.execute("DELETE FROM security_events WHERE target_email = ?", (email,))
-                c.execute("DELETE FROM users WHERE email = ?", (email,))
+                c.execute("UPDATE users SET status = 'banned' WHERE email = ?", (email,))
                 conn.commit()
-                # Log the ban event as a system event since the user no longer exists
+                # Log the ban event as a system event since the user data is purged
                 log_security_event("IDENTITY_PURGED", "SYSTEM", f"Administrator completely purged identity: {email}", severity="CRITICAL")
                 return True
                 
