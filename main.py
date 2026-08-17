@@ -396,9 +396,9 @@ with st.sidebar.expander("⚙️ Admin Terminal", expanded=False):
     except Exception:
         pass
     if not expected_admin_key:
-        expected_admin_key = os.getenv("ADMIN_KEY", "Sayar_Admin_2026")
+        expected_admin_key = os.getenv("ADMIN_KEY")
         
-    is_admin = (admin_input == expected_admin_key)
+    is_admin = bool(expected_admin_key) and (admin_input == expected_admin_key)
 
     if is_admin:
         notify_admin_action("Terminal accessed")
