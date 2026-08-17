@@ -17,6 +17,28 @@ import datetime
 from groq import Groq
 
 # ─────────────────────────────────────────────
+#  OPERATOR CONFIGURATION (F14 Fix)
+# ─────────────────────────────────────────────
+
+def _get_operator_name():
+    try:
+        import streamlit as st
+        if "OPERATOR_NAME" in st.secrets:
+            return st.secrets["OPERATOR_NAME"]
+    except Exception:
+        pass
+    return os.getenv("OPERATOR_NAME", "Sayar Bhattacharyya")
+
+def _get_operator_vpa():
+    try:
+        import streamlit as st
+        if "OPERATOR_VPA" in st.secrets:
+            return st.secrets["OPERATOR_VPA"]
+    except Exception:
+        pass
+    return os.getenv("OPERATOR_VPA", "sayarbhattacharyya9@oksbi")
+
+# ─────────────────────────────────────────────
 #  GROQ CLIENT INITIALIZATION
 # ─────────────────────────────────────────────
 
@@ -150,7 +172,7 @@ RESPONSE FORMAT (strict JSON):
 VERIFICATION CRITERIA:
 - Check if transaction shows status "Success" or "Completed"
 - Verify the amount matches the expected value
-- Look for recipient name "Sayar Bhattacharyya" or VPA "sayarbhattacharyya9@oksbi"
+- Look for recipient name and VPA specified in prompt
 - Check for UPI reference/transaction ID
 - Flag any signs of image manipulation (misaligned text, inconsistent fonts, artifacts)
 
@@ -184,6 +206,9 @@ def verify_payment_screenshot(image_bytes, expected_amount):
             "findings": ["Vision Sentinel offline — Groq API key not configured. Falling back to manual admin review."]
         }
     
+    op_name = _get_operator_name()
+    op_vpa = _get_operator_vpa()
+
     try:
         # Encode image to base64 for the vision model
         b64_image = base64.b64encode(image_bytes).decode("utf-8")
@@ -200,7 +225,7 @@ def verify_payment_screenshot(image_bytes, expected_amount):
                             "text": (
                                 f"Analyze this UPI payment screenshot. "
                                 f"Expected amount: ₹{expected_amount}. "
-                                f"Expected recipient: Sayar Bhattacharyya (VPA: sayarbhattacharyya9@oksbi). "
+                                f"Expected recipient: {op_name} (VPA: {op_vpa}). "
                                 f"Return your analysis in the specified JSON format."
                             )
                         },
@@ -410,12 +435,12 @@ def warden_heartbeat_check(all_users_data):
     if total == 0:
         posture = "DORMANT"
         posture_color = "#7064DF"
-    elif banned / max(total, 1) > 0.3:
-        posture = "ELEVATED THREAT"
-        posture_color = "#FFB347"
     elif banned / max(total, 1) > 0.5:
         posture = "CRITICAL"
         posture_color = "#FF6B6B"
+    elif banned / max(total, 1) > 0.3:
+        posture = "ELEVATED THREAT"
+        posture_color = "#FFB347"
     else:
         posture = "NOMINAL"
         posture_color = "#94FBAB"

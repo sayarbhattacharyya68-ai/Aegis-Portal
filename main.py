@@ -13,6 +13,7 @@ import os
 import pandas as pd
 import datetime
 import re
+import uuid
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 
@@ -32,7 +33,8 @@ from ai_analyser import (
 )
 from notifier import (
     notify, toast, notify_admin_action, security_alert, 
-    trigger_lockdown, format_event_for_display, get_severity_color
+    trigger_lockdown, format_event_for_display, get_severity_color,
+    get_admin_contact
 )
 
 # Load local environment variables (if any)
@@ -42,6 +44,22 @@ def is_valid_email(email):
     """Simple regex for email validation."""
     pattern = r'^[\w\.-]+@[\w\.-]+\.\w+$'
     return re.match(pattern, email) is not None
+
+def get_operator_name():
+    try:
+        if "OPERATOR_NAME" in st.secrets:
+            return st.secrets["OPERATOR_NAME"]
+    except Exception:
+        pass
+    return os.getenv("OPERATOR_NAME", "Sayar Bhattacharyya")
+
+def get_operator_vpa():
+    try:
+        if "OPERATOR_VPA" in st.secrets:
+            return st.secrets["OPERATOR_VPA"]
+    except Exception:
+        pass
+    return os.getenv("OPERATOR_VPA", "sayarbhattacharyya9@oksbi")
 
 # ─────────────────────────────────────────────
 #  1. CORE CONFIGURATION
@@ -286,8 +304,10 @@ if not st.session_state.logged_in:
                                 notify("login_success", notify_type="success")
                             st.rerun()
                         elif status == 'banned':
+                            security_alert("AUTH_FAILURE", email, "Banned identity attempted session linkage", severity="CRITICAL") # F8 Fix
                             notify("login_banned", notify_type="error")
                         else:
+                            security_alert("AUTH_FAILURE", email, "Failed authentication attempt", severity="WARNING") # F8 Fix
                             notify("login_failed", notify_type="error")
                         
         with t2:
@@ -326,7 +346,9 @@ if current_status == 'warned':
     st.warning("⚠️ **Administrator Warning**: Your recent activity has been flagged. Please adhere to security protocols.", icon="⚠️")
 
 if current_status == 'lockdown':
-    st.error("🔒 **LOCKDOWN ENGAGED**\n\nYour vault access is frozen. Contact the Administrator immediately at **8910162728**.\n\nFailure to comply will result in permanent Identity Purge.", icon="🚨")
+    # F9 Fix: Use get_admin_contact() helper instead of hardcoding digits
+    admin_contact = get_admin_contact()
+    st.error(f"🔒 **LOCKDOWN ENGAGED**\n\nYour vault access is frozen. Contact the Administrator immediately at **{admin_contact}**.\n\nFailure to comply will result in permanent Identity Purge.", icon="🚨")
 
 # ─────────────────────────────────────────────
 #  6. THE COMMAND CENTER (SIDEBAR)
@@ -342,7 +364,6 @@ st.sidebar.markdown(f"**Identity:** `{st.session_state.user_email}`")
 st.sidebar.markdown("---")
 
 # ── MOBILE INSTALL BUTTON ──
-# This only appears if the browser supports PWA installation
 st.sidebar.markdown("""
     <div id="install-btn-container" style="display: none; padding: 10px; border: 1px solid #94FBAB; border-radius: 10px; background: rgba(148, 251, 171, 0.1); margin-bottom: 20px;">
         <p style="color: #94FBAB; font-size: 0.8rem; text-align: center; margin-bottom: 10px;">Mobile Portal Available</p>
@@ -463,18 +484,26 @@ with st.sidebar.expander("⚙️ Admin Terminal", expanded=False):
                     st.image(p[5], use_container_width=True)
                 
                 c1, c2 = st.columns(2)
+                # F11 Fix: Pass administrator designation to log who verified
                 if c1.button("✅ Approve", key=f"app_{p[0]}", use_container_width=True): 
-                    approve_transaction(p[0])
+                    approve_transaction(p[0], admin_email="ADMIN_OVERRIDE")
                     st.rerun()
                 if c2.button("❌ Reject", key=f"rej_{p[0]}", use_container_width=True): 
-                    reject_transaction(p[0])
+                    reject_transaction(p[0], admin_email="ADMIN_OVERRIDE")
                     st.rerun()
                 st.markdown("---")
 
         with admin_tab3:
+            # F7 & F18 Fixes: Invoke warden_heartbeat_check & render full stats breakdown
+            all_users_data = get_all_users()
+            heartbeat = warden_heartbeat_check(all_users_data)
             stats = get_dashboard_stats()
-            st.markdown(f"**Total Identities:** {stats['total_identities']}")
+            
+            st.markdown(f"**Security Posture:** <span style='color:{heartbeat['posture_color']}'>{heartbeat['posture']}</span>", unsafe_allow_html=True)
+            st.markdown(f"**Online Now:** {heartbeat['online_now']} / {heartbeat['total_identities']}")
+            st.markdown(f"**Total Identities:** {stats['total_identities']} (Active: {stats['active_identities']})")
             st.markdown(f"**Encrypted Shards:** {stats['total_shards']}")
+            st.markdown(f"**Pending Ledger Tx:** {stats['pending_transactions']}")
             st.markdown(f"**Critical Events:** <span style='color:#FF6B6B'>{stats['threat_events']}</span>", unsafe_allow_html=True)
             
             if st.button("📑 Refresh Log", use_container_width=True):
@@ -564,12 +593,14 @@ elif module == "🔮 AI Oracle":
         
         col1, col2 = st.columns([1, 3])
         with col1:
+            # F13 read-time freshness check
+            current_credits = get_user_credits(st.session_state.user_email)
             analyze_btn = st.button("🚀 Analyze & Archive", type="primary", use_container_width=True)
             
         if analyze_btn:
             if not site or not user or not pwd or not master_key:
                 st.warning("🚨 All parameters (including your Master Vault Key) are required for Oracle consultation.")
-            elif credits > 0:
+            elif current_credits > 0:
                 if use_credit(st.session_state.user_email):
                     with st.spinner("Oracle is performing entropy analysis..."):
                         # 1. Get AI Analysis
@@ -599,6 +630,8 @@ elif module == "🔋 Credit-Bay":
     st.markdown("Acquire Ether-Credits to power the Aegis Oracle. Conversion: `₹10 = 1 EC`")
     
     col_qr, col_form = st.columns([1, 1.5])
+    op_name = get_operator_name()
+    op_vpa = get_operator_vpa()
     
     with col_qr:
         with st.container():
@@ -609,11 +642,12 @@ elif module == "🔋 Credit-Bay":
             except Exception:
                 st.error("QR Code missing from repository.")
             
-            st.markdown("""
+            # F14 Fix: Dynamic operator details
+            st.markdown(f"""
             <div style="background: rgba(8,13,36,0.6); padding: 15px; border-radius: 8px; border: 1px solid #7064DF; text-align: center;">
                 <p style="margin:0; color:#A0AEC0;">Verified Payment Address (VPA)</p>
-                <h3 style="margin:5px 0; color:#94FBAB;">sayarbhattacharyya9@oksbi</h3>
-                <p style="margin:0; color:#FFFFFF;">Recipient: Sayar Bhattacharyya</p>
+                <h3 style="margin:5px 0; color:#94FBAB;">{op_vpa}</h3>
+                <p style="margin:0; color:#FFFFFF;">Recipient: {op_name}</p>
             </div>
             """, unsafe_allow_html=True)
             
@@ -631,30 +665,31 @@ elif module == "🔋 Credit-Bay":
             if st.button("🚀 Engage Vision Sentinel", type="primary", use_container_width=True):
                 if shot:
                     with st.spinner("Vision Sentinel is analyzing the cryptographic proof..."):
-                        # 1. Save Image Locally (Simulating cloud bucket for this demo)
                         if not os.path.exists("audit_screenshots"):
                             os.makedirs("audit_screenshots")
-                        img_path = f"audit_screenshots/{st.session_state.user_email.replace('@','_')}_{int(datetime.datetime.now().timestamp())}.png"
+                        
+                        # F15 Fix: Unpredictable UUID-based audit file naming
+                        safe_token = uuid.uuid4().hex[:12]
+                        timestamp = int(datetime.datetime.now().timestamp())
+                        img_path = f"audit_screenshots/audit_{timestamp}_{safe_token}.png"
                         
                         img_bytes = shot.getbuffer()
                         with open(img_path, "wb") as f: 
                             f.write(img_bytes)
                         
-                        # 2. Vision Sentinel Analysis
+                        # Vision Sentinel Analysis
                         sentinel_result = verify_payment_screenshot(img_bytes.tobytes(), amount)
                         verdict = sentinel_result.get("verdict", "PENDING_ADMIN_REVIEW")
                         display = get_sentinel_verdict_display(verdict)
                         
-                        # 3. Log to Ledger
+                        # Log to Ledger
                         log_transaction(st.session_state.user_email, amount, verdict, img_path)
                         
-                        # 4. Display Results
+                        # Display Results
                         st.markdown("---")
                         st.markdown(f"### Sentinel Verdict: {display['icon']} <span style='color:{display['color']}'>{display['label']}</span>", unsafe_allow_html=True)
                         
                         if verdict == "VERIFIED":
-                            # Auto-approve if vision is absolutely certain (Optional: you can force admin review always)
-                            # For safety, let's keep it pending admin review but mark it as VERIFIED by AI
                             st.success("Vision Sentinel has verified the transaction. Awaiting final Administrator sign-off.")
                             for finding in sentinel_result.get("findings", []):
                                 st.markdown(f"▸ {finding}")

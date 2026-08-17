@@ -9,6 +9,7 @@
 ╚══════════════════════════════════════════════════════════════╝
 """
 
+import os
 import datetime
 import streamlit as st
 from database_logic import log_security_event
@@ -132,6 +133,7 @@ def notify_admin_action(action_description, target_email=None):
 def security_alert(event_type, target_email, details, severity=None):
     """
     Raise a security alert — logs to database and optionally displays to UI.
+    (F8 Fix)
     
     Args:
         event_type: Key from EVENT_TYPES dict
@@ -190,7 +192,7 @@ def format_event_for_display(event_row):
 
 
 def get_severity_color(severity):
-    """Return the CSS color for a severity level — matches the glassmorphism palette."""
+    """Return the CSS color for a severity level — matches the glassmorphism palette. (F8 Fix)"""
     colors = {
         "INFO":     "#94FBAB",   # Mint-Teal
         "WARNING":  "#FFB347",   # Amber
@@ -209,5 +211,10 @@ def format_timestamp(timestamp_str):
 
 
 def get_admin_contact():
-    """Return the system administrator contact information."""
-    return "8910162728"
+    """Return the system administrator contact information. (F9 & F14 Fix)"""
+    try:
+        if "ADMIN_PHONE" in st.secrets:
+            return st.secrets["ADMIN_PHONE"]
+    except Exception:
+        pass
+    return os.getenv("ADMIN_PHONE", "8910162728")

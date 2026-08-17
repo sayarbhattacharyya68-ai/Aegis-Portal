@@ -174,14 +174,13 @@ def update_user_status(email, new_status):
                 c.execute("DELETE FROM transactions WHERE user_email = ?", (email,))
                 c.execute("DELETE FROM security_events WHERE target_email = ?", (email,))
                 c.execute("UPDATE users SET status = 'banned' WHERE email = ?", (email,))
-                conn.commit()
-                # Log the ban event as a system event since the user data is purged
+                # F10 Fix: Implicit commit handled cleanly by context manager
                 log_security_event("IDENTITY_PURGED", "SYSTEM", f"Administrator completely purged identity: {email}", severity="CRITICAL")
                 return True
                 
             # Otherwise, just update the status
             c.execute("UPDATE users SET status = ? WHERE email = ?", (new_status, email))
-            conn.commit()
+            # F10 Fix: Implicit commit handled cleanly by context manager
             
             if new_status == 'lockdown':
                 log_security_event("LOCKDOWN_ENGAGED", email, "Administrator engaged identity lockdown", severity="CRITICAL")
@@ -235,11 +234,12 @@ def get_all_users():
 def get_fernet_key(user_password, salt_input):
     """Derive a valid 32-byte Fernet key from a human-readable password using PBKDF2."""
     salt_bytes = salt_input.encode() if isinstance(salt_input, str) else salt_input
+    # F12 Fix: Upgraded PBKDF2 iterations to 600,000 per OWASP current guidelines
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,
         salt=salt_bytes,
-        iterations=100000,
+        iterations=600000,
     )
     return base64.urlsafe_b64encode(kdf.derive(user_password.encode()))
 
@@ -440,8 +440,11 @@ def get_pending_transactions():
     return rows
 
 
-def approve_transaction(t_id):
-    """Admin action: Approve a transaction and grant corresponding Ether-Credits."""
+def approve_transaction(t_id, admin_email="ADMIN"):
+    """
+    Admin action: Approve a transaction, write verified_by, and grant corresponding Ether-Credits.
+    (F11 & F17 Fixes)
+    """
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT user_email, amount FROM transactions WHERE id = ?", (t_id,))
@@ -454,20 +457,33 @@ def approve_transaction(t_id):
                 (gems_to_add, email)
             )
             cursor.execute(
-                "UPDATE transactions SET status = 'APPROVED', verified_at = ? WHERE id = ?",
-                (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), t_id)
+                "UPDATE transactions SET status = 'APPROVED', verified_by = ?, verified_at = ? WHERE id = ?",
+                (admin_email, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), t_id)
             )
-    log_security_event("TRANSACTION_APPROVED", None, f"Transaction #{t_id} approved — credits dispensed")
+            # F17 Fix: Log only if record actually exists and update succeeded
+            log_security_event("TRANSACTION_APPROVED", email, f"Transaction #{t_id} approved by {admin_email} — credits dispensed")
+            return True
+        return False
 
 
-def reject_transaction(t_id):
-    """Admin action: Reject a fraudulent or invalid transaction."""
+def reject_transaction(t_id, admin_email="ADMIN"):
+    """
+    Admin action: Reject a fraudulent or invalid transaction and write verified_by.
+    (F11 & F17 Fixes)
+    """
     with get_db() as conn:
-        conn.execute(
-            "UPDATE transactions SET status = 'REJECTED', verified_at = ? WHERE id = ?",
-            (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), t_id)
-        )
-    log_security_event("TRANSACTION_REJECTED", None, f"Transaction #{t_id} rejected", severity="WARNING")
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_email FROM transactions WHERE id = ?", (t_id,))
+        row = cursor.fetchone()
+        if row:
+            cursor.execute(
+                "UPDATE transactions SET status = 'REJECTED', verified_by = ?, verified_at = ? WHERE id = ?",
+                (admin_email, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), t_id)
+            )
+            # F17 Fix: Log only if transaction exists
+            log_security_event("TRANSACTION_REJECTED", row[0], f"Transaction #{t_id} rejected by {admin_email}", severity="WARNING")
+            return True
+        return False
 
 # ─────────────────────────────────────────────
 #  SECURITY EVENT LOGGING (FORENSIC TRAIL)
