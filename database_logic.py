@@ -246,6 +246,13 @@ def get_fernet_key(user_password, salt_input):
 
 def save_account(owner, site, user, pwd, user_provided_key):
     """Encrypt and store a credential shard using a unique 16-byte random salt. Key is NEVER persisted."""
+    # Validate Master Key consistency against existing vault shards before persisting
+    existing_shards = fetch_accounts(owner, user_provided_key)
+    if existing_shards is None:
+        log_security_event("VAULT_WRITE_DENIED", owner, 
+                           "Master Key mismatch presented during shard archive — operation aborted", severity="WARNING")
+        return False
+
     raw_salt = os.urandom(16)
     fernet_key = get_fernet_key(user_provided_key, raw_salt)
     cipher = Fernet(fernet_key)
@@ -260,6 +267,7 @@ def save_account(owner, site, user, pwd, user_provided_key):
             (owner, enc_site, enc_user, enc_pwd, b64_salt)
         )
     log_security_event("VAULT_WRITE", owner, f"New shard archived for service: {site}")
+    return True
 
 
 def fetch_accounts(owner, user_provided_key):

@@ -581,11 +581,12 @@ elif module == "🔮 AI Oracle":
                         st.markdown(f"### Oracle Assessment: <span style='color:{color}'>{grade}</span>", unsafe_allow_html=True)
                         st.info(analysis)
                         
-                        # 3. Archive to Vault
-                        save_account(st.session_state.user_email, site, user, pwd, master_key)
-                        toast("shard_saved")
-                        
-                        st.success("✅ Shard successfully encrypted with your Master Vault Key.")
+                        # 3. Archive to Vault with Master-Key Verification
+                        if save_account(st.session_state.user_email, site, user, pwd, master_key):
+                            toast("shard_saved")
+                            st.success("✅ Shard successfully encrypted with your Master Vault Key.")
+                        else:
+                            st.error("🚨 Master Vault Key mismatch! The provided key does not decrypt existing shards in your vault.")
             else: 
                 notify("no_credits", notify_type="error")
 
