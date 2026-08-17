@@ -12,6 +12,7 @@ import sqlite3
 import datetime
 import bcrypt
 import base64
+import os
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -57,7 +58,7 @@ def setup_security():
             status TEXT DEFAULT 'active'
         )''')
 
-        # ── Schema migration: add missing columns ──
+        # ── Schema migration: add missing columns in users table ──
         cursor.execute("PRAGMA table_info(users)")
         existing_cols = {col[1] for col in cursor.fetchall()}
         if "last_seen" not in existing_cols:
@@ -72,9 +73,16 @@ def setup_security():
             site TEXT NOT NULL,
             username TEXT NOT NULL,
             password TEXT NOT NULL,
+            salt TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (owner_email) REFERENCES users(email)
         )''')
+
+        # ── Schema migration: add salt column in accounts table if missing ──
+        cursor.execute("PRAGMA table_info(accounts)")
+        existing_acc_cols = {col[1] for col in cursor.fetchall()}
+        if "salt" not in existing_acc_cols:
+            cursor.execute("ALTER TABLE accounts ADD COLUMN salt TEXT")
 
         # ── Transactions Table (Credit-Bay Ledger) ──
         cursor.execute('''CREATE TABLE IF NOT EXISTS transactions (
@@ -221,39 +229,41 @@ def get_all_users():
 #  ENCRYPTED SHARD VAULT (ZERO-KNOWLEDGE)
 # ─────────────────────────────────────────────
 
-def get_fernet_key(user_password, salt_string):
+def get_fernet_key(user_password, salt_input):
     """Derive a valid 32-byte Fernet key from a human-readable password using PBKDF2."""
+    salt_bytes = salt_input.encode() if isinstance(salt_input, str) else salt_input
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,
-        salt=salt_string.encode(),
+        salt=salt_bytes,
         iterations=100000,
     )
     return base64.urlsafe_b64encode(kdf.derive(user_password.encode()))
 
 
 def save_account(owner, site, user, pwd, user_provided_key):
-    """Encrypt and store a credential shard. Key is NEVER persisted."""
-    fernet_key = get_fernet_key(user_provided_key, owner)
+    """Encrypt and store a credential shard using a unique 16-byte random salt. Key is NEVER persisted."""
+    raw_salt = os.urandom(16)
+    fernet_key = get_fernet_key(user_provided_key, raw_salt)
     cipher = Fernet(fernet_key)
     enc_pwd = cipher.encrypt(pwd.encode()).decode()
+    b64_salt = base64.b64encode(raw_salt).decode()
+    
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO accounts (owner_email, site, username, password) VALUES (?, ?, ?, ?)",
-            (owner, site, user, enc_pwd)
+            "INSERT INTO accounts (owner_email, site, username, password, salt) VALUES (?, ?, ?, ?, ?)",
+            (owner, site, user, enc_pwd, b64_salt)
         )
     log_security_event("VAULT_WRITE", owner, f"New shard archived for service: {site}")
 
 
 def fetch_accounts(owner, user_provided_key):
-    """Decrypt and retrieve all shards for an identity. Returns None on key mismatch."""
+    """Decrypt and retrieve all shards for an identity using each shard's stored salt. Returns None on key mismatch."""
     try:
-        fernet_key = get_fernet_key(user_provided_key, owner)
-        cipher = Fernet(fernet_key)
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, site, username, password FROM accounts WHERE owner_email=?",
+                "SELECT id, site, username, password, salt FROM accounts WHERE owner_email=?",
                 (owner,)
             )
             rows = cursor.fetchall()
@@ -261,6 +271,14 @@ def fetch_accounts(owner, user_provided_key):
         decrypted_data = []
         for r in rows:
             try:
+                # Use stored random salt if available; fallback to owner email for legacy entries
+                if len(r) > 4 and r[4]:
+                    salt_bytes = base64.b64decode(r[4].encode())
+                else:
+                    salt_bytes = owner.encode()
+
+                fernet_key = get_fernet_key(user_provided_key, salt_bytes)
+                cipher = Fernet(fernet_key)
                 decrypted_pwd = cipher.decrypt(r[3].encode()).decode()
                 decrypted_data.append({
                     "id": r[0], "Site": r[1], "User": r[2], "Password": decrypted_pwd
@@ -282,7 +300,7 @@ def fetch_accounts(owner, user_provided_key):
 
 
 def update_account(account_id, new_username, new_password, user_provided_key):
-    """Re-encrypt and update an existing shard."""
+    """Re-encrypt and update an existing shard with a fresh random salt."""
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT owner_email FROM accounts WHERE id=?", (account_id,))
@@ -290,13 +308,15 @@ def update_account(account_id, new_username, new_password, user_provided_key):
         if not row:
             return False
             
-        fernet_key = get_fernet_key(user_provided_key, row[0])
+        raw_salt = os.urandom(16)
+        fernet_key = get_fernet_key(user_provided_key, raw_salt)
         cipher = Fernet(fernet_key)
         enc_pwd = cipher.encrypt(new_password.encode()).decode()
+        b64_salt = base64.b64encode(raw_salt).decode()
         
         cursor.execute(
-            "UPDATE accounts SET username=?, password=? WHERE id=?",
-            (new_username, enc_pwd, account_id)
+            "UPDATE accounts SET username=?, password=?, salt=? WHERE id=?",
+            (new_username, enc_pwd, b64_salt, account_id)
         )
     log_security_event("VAULT_WRITE", row[0], "Shard parameters updated")
     return True
