@@ -21,8 +21,12 @@ EVENT_TYPES = {
     "AUTH_SUCCESS":          {"icon": "🔓", "severity": "INFO",     "label": "Identity Sync"},
     "AUTH_FAILURE":          {"icon": "🚨", "severity": "WARNING",  "label": "Access Denied"},
     "IDENTITY_CREATED":      {"icon": "🧬", "severity": "INFO",     "label": "Shard Forged"},
+    "IDENTITY_PURGED":       {"icon": "⛔", "severity": "CRITICAL", "label": "Identity Purged"},
     "IDENTITY_BANNED":       {"icon": "⛔", "severity": "CRITICAL", "label": "Identity Revoked"},
     "IDENTITY_RESTORED":     {"icon": "✅", "severity": "INFO",     "label": "Identity Restored"},
+    "LOCKDOWN_ENGAGED":      {"icon": "🔒", "severity": "CRITICAL", "label": "Lockdown Engaged"},
+    "LOCKDOWN_TRIGGERED":    {"icon": "🔒", "severity": "CRITICAL", "label": "Global Lockdown"},
+    "WARNING_ISSUED":        {"icon": "⚠️", "severity": "WARNING",  "label": "Warning Issued"},
     "VAULT_ACCESS":          {"icon": "🔐", "severity": "INFO",     "label": "Vault Accessed"},
     "VAULT_ACCESS_DENIED":   {"icon": "🛑", "severity": "WARNING",  "label": "Vault Breach Attempt"},
     "VAULT_WRITE":           {"icon": "📝", "severity": "INFO",     "label": "Shard Archived"},
@@ -34,7 +38,6 @@ EVENT_TYPES = {
     "TRANSACTION_APPROVED":  {"icon": "✅", "severity": "INFO",     "label": "Transaction Verified"},
     "TRANSACTION_REJECTED":  {"icon": "❌", "severity": "WARNING",  "label": "Transaction Rejected"},
     "ADMIN_ACTION":          {"icon": "⚙️", "severity": "INFO",     "label": "Admin Override"},
-    "LOCKDOWN_TRIGGERED":    {"icon": "🔒", "severity": "CRITICAL", "label": "Global Lockdown"},
     "WARDEN_ALERT":          {"icon": "👁️", "severity": "WARNING",  "label": "Warden Alert"},
 }
 
