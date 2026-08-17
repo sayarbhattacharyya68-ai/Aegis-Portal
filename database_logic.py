@@ -246,13 +246,15 @@ def save_account(owner, site, user, pwd, user_provided_key):
     raw_salt = os.urandom(16)
     fernet_key = get_fernet_key(user_provided_key, raw_salt)
     cipher = Fernet(fernet_key)
+    enc_site = cipher.encrypt(site.encode()).decode()
+    enc_user = cipher.encrypt(user.encode()).decode()
     enc_pwd = cipher.encrypt(pwd.encode()).decode()
     b64_salt = base64.b64encode(raw_salt).decode()
     
     with get_db() as conn:
         conn.execute(
             "INSERT INTO accounts (owner_email, site, username, password, salt) VALUES (?, ?, ?, ?, ?)",
-            (owner, site, user, enc_pwd, b64_salt)
+            (owner, enc_site, enc_user, enc_pwd, b64_salt)
         )
     log_security_event("VAULT_WRITE", owner, f"New shard archived for service: {site}")
 
@@ -279,9 +281,22 @@ def fetch_accounts(owner, user_provided_key):
 
                 fernet_key = get_fernet_key(user_provided_key, salt_bytes)
                 cipher = Fernet(fernet_key)
+
+                # Decrypt site and username (fallback to raw string for legacy unencrypted records)
+                try:
+                    decrypted_site = cipher.decrypt(r[1].encode()).decode()
+                except Exception:
+                    decrypted_site = r[1]
+
+                try:
+                    decrypted_user = cipher.decrypt(r[2].encode()).decode()
+                except Exception:
+                    decrypted_user = r[2]
+
                 decrypted_pwd = cipher.decrypt(r[3].encode()).decode()
+
                 decrypted_data.append({
-                    "id": r[0], "Site": r[1], "User": r[2], "Password": decrypted_pwd
+                    "id": r[0], "Site": decrypted_site, "User": decrypted_user, "Password": decrypted_pwd
                 })
             except InvalidToken:
                 # This shard was encrypted with a different key — skip it
@@ -303,20 +318,38 @@ def update_account(account_id, new_username, new_password, user_provided_key):
     """Re-encrypt and update an existing shard with a fresh random salt."""
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT owner_email FROM accounts WHERE id=?", (account_id,))
+        cursor.execute("SELECT owner_email, site, salt FROM accounts WHERE id=?", (account_id,))
         row = cursor.fetchone()
         if not row:
             return False
             
+        owner, old_enc_site, old_salt_b64 = row[0], row[1], row[2]
+
+        if old_salt_b64:
+            old_salt_bytes = base64.b64decode(old_salt_b64.encode())
+        else:
+            old_salt_bytes = owner.encode()
+
+        old_fernet_key = get_fernet_key(user_provided_key, old_salt_bytes)
+        old_cipher = Fernet(old_fernet_key)
+
+        try:
+            site_plain = old_cipher.decrypt(old_enc_site.encode()).decode()
+        except Exception:
+            site_plain = old_enc_site
+
         raw_salt = os.urandom(16)
         fernet_key = get_fernet_key(user_provided_key, raw_salt)
         cipher = Fernet(fernet_key)
+        
+        enc_site = cipher.encrypt(site_plain.encode()).decode()
+        enc_user = cipher.encrypt(new_username.encode()).decode()
         enc_pwd = cipher.encrypt(new_password.encode()).decode()
         b64_salt = base64.b64encode(raw_salt).decode()
         
         cursor.execute(
-            "UPDATE accounts SET username=?, password=?, salt=? WHERE id=?",
-            (new_username, enc_pwd, b64_salt, account_id)
+            "UPDATE accounts SET site=?, username=?, password=?, salt=? WHERE id=?",
+            (enc_site, enc_user, enc_pwd, b64_salt, account_id)
         )
     log_security_event("VAULT_WRITE", row[0], "Shard parameters updated")
     return True
