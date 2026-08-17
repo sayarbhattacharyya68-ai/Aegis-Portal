@@ -424,7 +424,7 @@ def get_pending_transactions():
     """Retrieve all transactions awaiting admin verification."""
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM transactions WHERE status = 'PENDING' ORDER BY id DESC")
+        cursor.execute("SELECT * FROM transactions WHERE status NOT IN ('APPROVED', 'REJECTED') ORDER BY id DESC")
         rows = cursor.fetchall()
     return rows
 
@@ -519,7 +519,7 @@ def get_dashboard_stats():
         cursor.execute("SELECT COUNT(*) FROM security_events WHERE severity IN ('WARNING', 'CRITICAL')")
         threat_events = cursor.fetchone()[0]
 
-        cursor.execute("SELECT COUNT(*) FROM transactions WHERE status = 'PENDING'")
+        cursor.execute("SELECT COUNT(*) FROM transactions WHERE status NOT IN ('APPROVED', 'REJECTED')")
         pending_tx = cursor.fetchone()[0]
 
     return {
