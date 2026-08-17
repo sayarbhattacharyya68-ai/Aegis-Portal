@@ -115,7 +115,7 @@ def get_oracle_analysis(password):
     
     try:
         completion = client.chat.completions.create(
-            model="openai/gpt-oss-120b",
+            model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": ORACLE_SYSTEM_PROMPT},
                 {"role": "user", "content": f"Perform adversarial entropy analysis on this credential payload: {password}"}
@@ -214,7 +214,7 @@ def verify_payment_screenshot(image_bytes, expected_amount):
         b64_image = base64.b64encode(image_bytes).decode("utf-8")
         
         completion = client.chat.completions.create(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            model="llama-3.2-90b-vision-preview",
             messages=[
                 {"role": "system", "content": SENTINEL_SYSTEM_PROMPT},
                 {
@@ -365,7 +365,7 @@ def warden_assess_identity(email, event_history):
     
     try:
         completion = client.chat.completions.create(
-            model="openai/gpt-oss-120b",
+            model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": WARDEN_SYSTEM_PROMPT},
                 {
