@@ -216,3 +216,39 @@ def test_cleanup_removes_aged_orphan_screenshots(temp_db, tmp_path):
     deleted = db.cleanup_expired_screenshots(upload_dir, retention_days=30)
     assert deleted == 1
     assert not orphan.exists()
+
+def test_unreadable_record_does_not_block_readable_vault(temp_db):
+    email = "vault-owner@example.com"
+    insert_test_user(email)
+    db.save_account(email, "good-site", "good-user", "GoodPass1", "Master-Key-1")
+    # A record encrypted with a different key must not hide the readable records.
+    with db.get_db() as conn:
+        conn.execute(
+            "INSERT INTO accounts (owner_email, site, username, password, salt, encryption_version) "
+            "VALUES (?, ?, ?, ?, NULL, 0)",
+            (email, "old-site", "old-user", Fernet(Fernet.generate_key()).encrypt(b"OldPass").decode()),
+        )
+
+    records, unreadable = db.unlock_vault(email, "Master-Key-1")
+    assert [r["Site"] for r in records] == ["good-site"]
+    assert len(unreadable) == 1
+    assert db.unlock_vault(email, "wrong-key") is None
+
+
+def test_verified_vault_stays_open_after_last_readable_record_is_deleted(temp_db):
+    email = "vault-owner2@example.com"
+    insert_test_user(email)
+    db.save_account(email, "only-site", "only-user", "OnlyPass1", "Master-Key-2")
+    with db.get_db() as conn:
+        conn.execute(
+            "INSERT INTO accounts (owner_email, site, username, password, salt, encryption_version) "
+            "VALUES (?, ?, ?, ?, NULL, 0)",
+            (email, "old-site", "old-user", Fernet(Fernet.generate_key()).encrypt(b"OldPass").decode()),
+        )
+    readable_id = db.unlock_vault(email, "Master-Key-2")[0][0]["id"]
+    assert db.delete_account(readable_id, email)
+
+    result = db.unlock_vault(email, "Master-Key-2", key_verified=True)
+    assert result is not None
+    assert result[0] == []
+    assert len(result[1]) == 1

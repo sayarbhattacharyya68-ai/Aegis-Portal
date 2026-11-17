@@ -26,7 +26,7 @@ from PIL import Image, UnidentifiedImageError
 from database_logic import (
     setup_security, authenticate_user, create_user, get_all_users,
     update_heartbeat, get_user_credits, use_credit, save_account,
-    fetch_accounts, update_account, delete_account, check_status,
+    fetch_accounts, unlock_vault, update_account, delete_account, check_status,
     update_user_status, reset_vault_data, grant_gems, refund_credit, log_transaction,
     get_pending_transactions, approve_transaction, reject_transaction,
     get_security_events, get_dashboard_stats, cleanup_expired_screenshots,
@@ -66,6 +66,7 @@ def _get_app_setting(name, default=None):
 def _clear_sensitive_session():
     """Remove decrypted vault data and schedule sensitive widget values for clearing."""
     st.session_state.decrypted_shard = None
+    st.session_state.unreadable_ids = []
     st.session_state.active_key = None
     st.session_state.clear_vault_key_next_run = True
     st.session_state.clear_oracle_secrets_next_run = True
@@ -719,27 +720,30 @@ if module == "📂 Archive Vault":
     if vault_notice == "unlocked":
         st.success("Vault unlocked. The input key has been cleared from the form.")
     elif vault_notice == "wrong_key":
-        st.warning("The supplied vault key could not decrypt the saved records. The key field was cleared.")
-    
+        st.warning("The supplied vault key could not open any saved record. Check the key and try again.")
+    elif vault_notice == "vault_closed":
+        st.info("The vault could not be refreshed and has been locked. Unlock it again with your Master Vault Key.")
+
     with st.container():
         st.markdown("### Shard Decryption Protocol")
         col1, col2 = st.columns([3, 1])
         with col1:
             input_key = st.text_input(
-            "Enter Master Vault Key",
-            type="password",
-            key="vault_master_key_input",
-            help="Enter the exact Master Vault Key you used when archiving credentials in Aegis Oracle.",
-        )
+                "Enter Master Vault Key",
+                type="password",
+                key="vault_master_key_input",
+                help="Enter the exact Master Vault Key you used when archiving credentials in Aegis Oracle.",
+            )
         with col2:
             st.markdown("<br>", unsafe_allow_html=True)
             decrypt_btn = st.button("🔓 Decrypt Shard Vault", use_container_width=True)
 
         if decrypt_btn:
             if input_key:
-                data = fetch_accounts(st.session_state.user_email, input_key)
-                if data is not None:
-                    st.session_state.decrypted_shard = data
+                result = unlock_vault(st.session_state.user_email, input_key)
+                if result is not None:
+                    st.session_state.decrypted_shard = result[0]
+                    st.session_state.unreadable_ids = result[1]
                     st.session_state.active_key = input_key
                     st.session_state.vault_notice = "unlocked"
                     st.session_state.clear_vault_key_next_run = True
@@ -748,6 +752,20 @@ if module == "📂 Archive Vault":
                     st.session_state.vault_notice = "wrong_key"
                     _clear_sensitive_session()
                     st.rerun()
+            else:
+                st.warning("Enter your Master Vault Key first.")
+
+    def _refresh_vault():
+        """Reload the unlocked vault after an edit or delete, using the verified key."""
+        result = unlock_vault(
+            st.session_state.user_email, st.session_state.active_key, key_verified=True
+        )
+        if result is None:
+            _clear_sensitive_session()
+            st.session_state.vault_notice = "vault_closed"
+            st.rerun()
+        st.session_state.decrypted_shard = result[0]
+        st.session_state.unreadable_ids = result[1]
 
     if st.session_state.decrypted_shard is not None:
         lock_col, _ = st.columns([1, 4])
@@ -756,51 +774,79 @@ if module == "📂 Archive Vault":
             st.rerun()
         st.markdown("---")
         st.markdown("### 🧬 Active Shards")
-        
-        if not st.session_state.decrypted_shard:
-            st.info("The vault is pristine. No credential shards have been archived.")
-        else:
-            for entry in st.session_state.decrypted_shard:
-                with st.expander(f"🔹 {entry['Site']}", expanded=False):
-                    edit_col1, edit_col2, edit_col3 = st.columns(3)
-                    with edit_col1:
-                        new_site = st.text_input("Service Identifier", entry['Site'], key=f"site_{entry['id']}")
-                    with edit_col2:
-                        new_u = st.text_input("Designation (User)", entry['User'], key=f"u_{entry['id']}")
-                    with edit_col3:
-                        new_p = st.text_input("Cipher (Password)", entry['Password'], type="password", key=f"p_{entry['id']}")
 
-                    btn_col1, btn_col2 = st.columns(2)
-                    with btn_col1:
-                        if st.button("💾 Save Changes", key=f"save_{entry['id']}", use_container_width=True):
-                            if update_account(
-                                entry['id'], new_u, new_p, st.session_state.active_key,
-                                st.session_state.user_email, new_site=new_site,
-                            ):
-                                notify("shard_updated", notify_type="success")
-                                st.session_state.decrypted_shard = fetch_accounts(
-                                    st.session_state.user_email, st.session_state.active_key
-                                )
-                                st.rerun()
-                            else:
-                                st.error("The credential changes could not be saved.")
-                    with btn_col2:
-                        confirm_delete = st.checkbox(
-                            "Confirm permanent deletion",
-                            key=f"confirm_d_{entry['id']}",
-                        )
-                        if st.button(
-                            "🗑️ Delete Credential",
-                            key=f"d_{entry['id']}",
-                            use_container_width=True,
-                            disabled=not confirm_delete,
+        if not st.session_state.decrypted_shard and not st.session_state.get("unreadable_ids"):
+            st.info("The vault is pristine. No credential shards have been archived.")
+
+        for entry in st.session_state.decrypted_shard:
+            with st.expander(f"🔹 {entry['Site']}", expanded=False):
+                edit_col1, edit_col2, edit_col3 = st.columns(3)
+                with edit_col1:
+                    new_site = st.text_input("Service Identifier", entry["Site"], key=f"site_{entry['id']}")
+                with edit_col2:
+                    new_u = st.text_input("Designation (User)", entry["User"], key=f"u_{entry['id']}")
+                with edit_col3:
+                    new_p = st.text_input(
+                        "Cipher (Password)", entry["Password"], type="password", key=f"p_{entry['id']}"
+                    )
+
+                btn_col1, btn_col2 = st.columns(2)
+                with btn_col1:
+                    if st.button("💾 Save Changes", key=f"save_{entry['id']}", use_container_width=True):
+                        if update_account(
+                            entry["id"], new_u, new_p, st.session_state.active_key,
+                            st.session_state.user_email, new_site=new_site,
                         ):
-                            if delete_account(entry['id'], st.session_state.user_email):
-                                notify("shard_deleted", notify_type="warning")
-                                st.session_state.decrypted_shard = fetch_accounts(
-                                    st.session_state.user_email, st.session_state.active_key
-                                )
-                                st.rerun()
+                            notify("shard_updated", notify_type="success")
+                            _refresh_vault()
+                            st.rerun()
+                        else:
+                            st.error("The credential changes could not be saved.")
+                with btn_col2:
+                    confirm_delete = st.checkbox(
+                        "Confirm permanent deletion",
+                        key=f"confirm_d_{entry['id']}",
+                    )
+                    if st.button(
+                        "🗑️ Delete Credential",
+                        key=f"d_{entry['id']}",
+                        use_container_width=True,
+                        disabled=not confirm_delete,
+                    ):
+                        if delete_account(entry["id"], st.session_state.user_email):
+                            notify("shard_deleted", notify_type="warning")
+                            _refresh_vault()
+                            st.rerun()
+                        else:
+                            st.error("The credential could not be deleted.")
+
+        unreadable_ids = st.session_state.get("unreadable_ids") or []
+        if unreadable_ids:
+            st.markdown("---")
+            st.markdown("### ⚠️ Records Not Opened By This Key")
+            st.warning(
+                f"{len(unreadable_ids)} saved record(s) could not be opened with the Master Vault Key you entered. "
+                "They were saved with a different key or an older format. They stay hidden and encrypted. "
+                "If you no longer need them, you can delete them below."
+            )
+            for record_id in unreadable_ids:
+                with st.expander(f"🔒 Record #{record_id} (encrypted, not opened)", expanded=False):
+                    confirm_old = st.checkbox(
+                        "Confirm permanent deletion",
+                        key=f"confirm_unreadable_{record_id}",
+                    )
+                    if st.button(
+                        "🗑️ Delete This Record",
+                        key=f"del_unreadable_{record_id}",
+                        use_container_width=True,
+                        disabled=not confirm_old,
+                    ):
+                        if delete_account(record_id, st.session_state.user_email):
+                            notify("shard_deleted", notify_type="warning")
+                            _refresh_vault()
+                            st.rerun()
+                        else:
+                            st.error("The record could not be deleted.")
 
 # ─────────────────────────────────────────────
 #  9. MODULE 2: AI ORACLE

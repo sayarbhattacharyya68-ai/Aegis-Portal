@@ -318,8 +318,15 @@ def save_account(owner, site, user, pwd, user_provided_key):
     log_security_event("VAULT_WRITE", owner, "New encrypted credential archived")
 
 
-def fetch_accounts(owner, user_provided_key):
-    """Decrypt owner's entries and migrate legacy password-only records after correct unlock."""
+def unlock_vault(owner, user_provided_key, key_verified=False):
+    """Decrypt owner's entries with the supplied Master Vault Key.
+
+    Returns (records, unreadable_ids) on success. Returns None when the identity is
+    not active, storage fails, or the key opens no record (a wrong key). When
+    key_verified is True the key has already unlocked this vault in the session, so
+    an empty result set is returned instead of None. Records that cannot be opened
+    with this key are reported by id so they never block the readable records.
+    """
     if not isinstance(owner, str) or not isinstance(user_provided_key, str) or not user_provided_key:
         return None
     try:
@@ -337,6 +344,7 @@ def fetch_accounts(owner, user_provided_key):
             ).fetchall()
 
         decrypted = []
+        unreadable = []
         migrations = []
         for row in rows:
             try:
@@ -368,12 +376,15 @@ def fetch_accounts(owner, user_provided_key):
                     "id": row[0], "Site": site, "User": username, "Password": password
                 })
             except (InvalidToken, ValueError, TypeError, UnicodeError):
-                log_security_event(
-                    "VAULT_ACCESS_DENIED", owner,
-                    "Vault key verification failed or a credential is damaged",
-                    severity="WARNING",
-                )
-                return None
+                unreadable.append(row[0])
+
+        if rows and not decrypted and not key_verified:
+            log_security_event(
+                "VAULT_ACCESS_DENIED", owner,
+                "Master Vault Key did not open any saved record",
+                severity="WARNING",
+            )
+            return None
 
         if migrations:
             with get_db() as conn:
@@ -390,10 +401,23 @@ def fetch_accounts(owner, user_provided_key):
                         (enc_site, enc_user, enc_password, encoded_salt, account_id, owner),
                     )
 
+        if unreadable:
+            log_security_event(
+                "VAULT_ACCESS_DENIED", owner,
+                f"{len(unreadable)} saved record(s) could not be opened with the supplied key",
+                severity="WARNING",
+            )
         log_security_event("VAULT_ACCESS", owner, f"Vault accessed; {len(decrypted)} records decrypted")
-        return decrypted
+        return decrypted, unreadable
     except (sqlite3.Error, ValueError, TypeError):
         return None
+
+
+def fetch_accounts(owner, user_provided_key):
+    """Return only the readable records, or None when the key cannot unlock the vault."""
+    result = unlock_vault(owner, user_provided_key)
+    return None if result is None else result[0]
+
 
 def update_account(account_id, new_username, new_password, user_provided_key, owner_email, new_site=None):
     """Edit each credential field and encrypt them using a fresh stored salt."""
