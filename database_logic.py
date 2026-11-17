@@ -81,6 +81,7 @@ def setup_security():
             username TEXT NOT NULL,
             password TEXT NOT NULL,
             salt TEXT,
+            encryption_version INTEGER NOT NULL DEFAULT 0,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (owner_email) REFERENCES users(email)
         )""")
@@ -88,6 +89,8 @@ def setup_security():
         account_columns = {column[1] for column in cursor.fetchall()}
         if "salt" not in account_columns:
             cursor.execute("ALTER TABLE accounts ADD COLUMN salt TEXT")
+        if "encryption_version" not in account_columns:
+            cursor.execute("ALTER TABLE accounts ADD COLUMN encryption_version INTEGER NOT NULL DEFAULT 0")
 
         cursor.execute("""CREATE TABLE IF NOT EXISTS transactions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,6 +103,18 @@ def setup_security():
             verified_at TEXT,
             FOREIGN KEY (user_email) REFERENCES users(email)
         )""")
+
+        cursor.execute("PRAGMA table_info(transactions)")
+        transaction_columns = {column[1] for column in cursor.fetchall()}
+        for column_name, column_type in (
+            ("ai_verdict", "TEXT"),
+            ("ai_confidence", "REAL"),
+            ("ai_findings", "TEXT"),
+            ("ai_amount_detected", "TEXT"),
+            ("ai_recipient_match", "INTEGER"),
+        ):
+            if column_name not in transaction_columns:
+                cursor.execute(f"ALTER TABLE transactions ADD COLUMN {column_name} {column_type}")
 
         cursor.execute("""CREATE TABLE IF NOT EXISTS security_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -176,7 +191,8 @@ def authenticate_user(email, password):
         if row and bcrypt.checkpw(password.encode("utf-8"), row[0]):
             with get_db() as conn:
                 conn.execute("DELETE FROM auth_attempts WHERE email=?", (email,))
-            update_heartbeat(email)
+            if row[1] != "banned":
+                update_heartbeat(email)
             log_security_event("AUTH_SUCCESS", email, "Identity authentication succeeded")
             return row[1]
 
@@ -210,20 +226,20 @@ def update_user_status(email, new_status):
     try:
         with get_db() as conn:
             if new_status == "banned":
-                conn.execute("DELETE FROM accounts WHERE owner_email=?", (email,))
-                conn.execute("DELETE FROM transactions WHERE user_email=?", (email,))
-                conn.execute("DELETE FROM security_events WHERE target_email=?", (email,))
+                # Retain this identity and its records so the user can authenticate
+                # only to see the suspension notice and the administrator can audit.
                 conn.execute("DELETE FROM auth_attempts WHERE email=?", (email,))
-                result = conn.execute("DELETE FROM users WHERE email=?", (email,))
-                changed = result.rowcount == 1
-            else:
-                result = conn.execute("UPDATE users SET status=? WHERE email=?", (new_status, email))
-                changed = result.rowcount == 1
+            result = conn.execute("UPDATE users SET status=? WHERE email=?", (new_status, email))
+            changed = result.rowcount == 1
         if changed:
-            event = "IDENTITY_PURGED" if new_status == "banned" else f"IDENTITY_{new_status.upper()}"
+            event = f"IDENTITY_{new_status.upper()}"
             severity = "CRITICAL" if new_status in {"banned", "lockdown"} else "WARNING" if new_status == "warned" else "INFO"
-            log_security_event(event, "SYSTEM" if new_status == "banned" else email,
-                               "Administrator changed identity status", severity=severity)
+            message = (
+                "Administrator suspended identity access; records retained for audit"
+                if new_status == "banned"
+                else "Administrator changed identity status"
+            )
+            log_security_event(event, email, message, severity=severity)
         return changed
     except sqlite3.Error:
         return False
@@ -232,7 +248,10 @@ def update_user_status(email, new_status):
 def update_heartbeat(email):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_db() as conn:
-        conn.execute("UPDATE users SET last_seen=? WHERE email=?", (now, email))
+        conn.execute(
+            "UPDATE users SET last_seen=? WHERE email=? AND status!='banned'",
+            (now, email),
+        )
 
 
 def get_all_users():
@@ -270,80 +289,161 @@ def get_fernet_key(user_password, salt_input):
 
 
 def save_account(owner, site, user, pwd, user_provided_key):
+    """Encrypt service, username, and password with the user's Master Vault Key."""
     if not all(isinstance(value, str) for value in (owner, site, user, pwd, user_provided_key)):
         raise ValueError("Credential fields must be text.")
-    if not site.strip() or len(site) > 200 or len(user) > 254 or not pwd or len(pwd) > 4096:
+    if (
+        not site.strip() or len(site) > 200 or len(user) > 254
+        or not pwd or len(pwd) > 4096 or len(user_provided_key) > 4096
+    ):
         raise ValueError("Credential fields are empty or exceed the supported size.")
+
     raw_salt = os.urandom(16)
     cipher = Fernet(get_fernet_key(user_provided_key, raw_salt))
-    encrypted_password = cipher.encrypt(pwd.encode()).decode()
-    encoded_salt = base64.b64encode(raw_salt).decode()
+    encrypted_site = cipher.encrypt(site.strip().encode("utf-8")).decode("ascii")
+    encrypted_user = cipher.encrypt(user.strip().encode("utf-8")).decode("ascii")
+    encrypted_password = cipher.encrypt(pwd.encode("utf-8")).decode("ascii")
+    encoded_salt = base64.b64encode(raw_salt).decode("ascii")
+
     with get_db() as conn:
-        conn.execute(
-            "INSERT INTO accounts (owner_email, site, username, password, salt) VALUES (?, ?, ?, ?, ?)",
-            (owner, site.strip(), user, encrypted_password, encoded_salt),
+        result = conn.execute(
+            "INSERT INTO accounts "
+            "(owner_email, site, username, password, salt, encryption_version) "
+            "SELECT ?, ?, ?, ?, ?, 2 WHERE EXISTS "
+            "(SELECT 1 FROM users WHERE email=? AND status='active')",
+            (owner, encrypted_site, encrypted_user, encrypted_password, encoded_salt, owner),
         )
-    log_security_event("VAULT_WRITE", owner, "New credential archived")
+        if result.rowcount != 1:
+            raise PermissionError("This identity is suspended or no longer active.")
+    log_security_event("VAULT_WRITE", owner, "New encrypted credential archived")
 
 
 def fetch_accounts(owner, user_provided_key):
-    """Decrypt only the selected owner's rows; return None when no row decrypts."""
+    """Decrypt owner's entries and migrate legacy password-only records after correct unlock."""
+    if not isinstance(owner, str) or not isinstance(user_provided_key, str) or not user_provided_key:
+        return None
     try:
         with get_db() as conn:
+            standing = conn.execute(
+                "SELECT status FROM users WHERE email=?",
+                (owner,),
+            ).fetchone()
+            if not standing or standing[0] != "active":
+                return None
             rows = conn.execute(
-                "SELECT id, site, username, password, salt FROM accounts WHERE owner_email=? ORDER BY id",
+                "SELECT id, site, username, password, salt, encryption_version "
+                "FROM accounts WHERE owner_email=? ORDER BY id",
                 (owner,),
             ).fetchall()
+
         decrypted = []
-        failed = 0
+        migrations = []
         for row in rows:
             try:
-                salt_bytes = base64.b64decode(row[4].encode()) if row[4] else owner.encode()
-                key = get_fernet_key(user_provided_key, salt_bytes)
-                plaintext = Fernet(key).decrypt(row[3].encode()).decode()
-                decrypted.append({"id": row[0], "Site": row[1], "User": row[2], "Password": plaintext})
-            except (InvalidToken, ValueError, TypeError):
-                failed += 1
-        if rows and not decrypted:
-            log_security_event("VAULT_ACCESS_DENIED", owner, "Vault key verification failed", severity="WARNING")
-            return None
-        # Mixed legacy/corrupt rows must not cause partial plaintext display.
-        if failed:
-            return None
+                salt_bytes = (
+                    base64.b64decode(row[4].encode("ascii"), validate=True)
+                    if row[4] else owner.encode("utf-8")
+                )
+                version = int(row[5] or 0)
+                cipher = Fernet(get_fernet_key(user_provided_key, salt_bytes))
+                if version >= 2:
+                    site = cipher.decrypt(row[1].encode("ascii")).decode("utf-8")
+                    username = cipher.decrypt(row[2].encode("ascii")).decode("utf-8")
+                    password = cipher.decrypt(row[3].encode("ascii")).decode("utf-8")
+                else:
+                    # Legacy rows encrypted only Password. Upgrade only after it
+                    # has been successfully decrypted with the supplied master key.
+                    site, username = row[1], row[2]
+                    password = cipher.decrypt(row[3].encode("ascii")).decode("utf-8")
+                    new_salt = os.urandom(16)
+                    new_cipher = Fernet(get_fernet_key(user_provided_key, new_salt))
+                    migrations.append((
+                        new_cipher.encrypt(site.encode("utf-8")).decode("ascii"),
+                        new_cipher.encrypt(username.encode("utf-8")).decode("ascii"),
+                        new_cipher.encrypt(password.encode("utf-8")).decode("ascii"),
+                        base64.b64encode(new_salt).decode("ascii"),
+                        row[0],
+                    ))
+                decrypted.append({
+                    "id": row[0], "Site": site, "User": username, "Password": password
+                })
+            except (InvalidToken, ValueError, TypeError, UnicodeError):
+                log_security_event(
+                    "VAULT_ACCESS_DENIED", owner,
+                    "Vault key verification failed or a credential is damaged",
+                    severity="WARNING",
+                )
+                return None
+
+        if migrations:
+            with get_db() as conn:
+                active = conn.execute(
+                    "SELECT 1 FROM users WHERE email=? AND status='active'",
+                    (owner,),
+                ).fetchone()
+                if not active:
+                    return None
+                for enc_site, enc_user, enc_password, encoded_salt, account_id in migrations:
+                    conn.execute(
+                        "UPDATE accounts SET site=?, username=?, password=?, salt=?, encryption_version=2 "
+                        "WHERE id=? AND owner_email=? AND encryption_version<2",
+                        (enc_site, enc_user, enc_password, encoded_salt, account_id, owner),
+                    )
+
         log_security_event("VAULT_ACCESS", owner, f"Vault accessed; {len(decrypted)} records decrypted")
         return decrypted
     except (sqlite3.Error, ValueError, TypeError):
         return None
 
-
-def update_account(account_id, new_username, new_password, user_provided_key, owner_email):
-    """Re-encrypt one credential, enforcing ownership in the SQL statement."""
+def update_account(account_id, new_username, new_password, user_provided_key, owner_email, new_site=None):
+    """Edit each credential field and encrypt them using a fresh stored salt."""
     if not all(isinstance(value, str) for value in (new_username, new_password, user_provided_key, owner_email)):
         return False
-    if len(new_username) > 254 or not new_password or len(new_password) > 4096:
+    if new_site is not None and not isinstance(new_site, str):
+        return False
+    if (
+        len(new_username) > 254 or not new_password or len(new_password) > 4096
+        or len(user_provided_key) > 4096
+        or (new_site is not None and (not new_site.strip() or len(new_site) > 200))
+    ):
         return False
     try:
+        if new_site is None:
+            records = fetch_accounts(owner_email, user_provided_key)
+            if records is None:
+                return False
+            record = next((item for item in records if item["id"] == account_id), None)
+            if record is None:
+                return False
+            new_site = record["Site"]
+
         raw_salt = os.urandom(16)
-        encrypted = Fernet(get_fernet_key(user_provided_key, raw_salt)).encrypt(new_password.encode()).decode()
-        salt = base64.b64encode(raw_salt).decode()
+        cipher = Fernet(get_fernet_key(user_provided_key, raw_salt))
+        enc_site = cipher.encrypt(new_site.strip().encode("utf-8")).decode("ascii")
+        enc_user = cipher.encrypt(new_username.strip().encode("utf-8")).decode("ascii")
+        enc_password = cipher.encrypt(new_password.encode("utf-8")).decode("ascii")
+        encoded_salt = base64.b64encode(raw_salt).decode("ascii")
         with get_db() as conn:
             result = conn.execute(
-                "UPDATE accounts SET username=?, password=?, salt=? WHERE id=? AND owner_email=?",
-                (new_username, encrypted, salt, account_id, owner_email),
+                "UPDATE accounts SET site=?, username=?, password=?, salt=?, encryption_version=2 "
+                "WHERE id=? AND owner_email=? AND EXISTS "
+                "(SELECT 1 FROM users WHERE email=? AND status='active')",
+                (enc_site, enc_user, enc_password, encoded_salt, account_id, owner_email, owner_email),
             )
         if result.rowcount:
-            log_security_event("VAULT_WRITE", owner_email, "Credential record updated")
+            log_security_event("VAULT_WRITE", owner_email, "Encrypted credential record updated")
             return True
         return False
-    except (sqlite3.Error, ValueError, TypeError):
+    except (sqlite3.Error, ValueError, TypeError, InvalidToken):
         return False
 
-
 def delete_account(account_id, owner_email):
-    """Delete only a credential belonging to the authenticated owner."""
+    """Delete only a credential belonging to an active owner."""
     with get_db() as conn:
         result = conn.execute(
-            "DELETE FROM accounts WHERE id=? AND owner_email=?", (account_id, owner_email)
+            "DELETE FROM accounts WHERE id=? AND owner_email=? AND EXISTS "
+            "(SELECT 1 FROM users WHERE email=? AND status='active')",
+            (account_id, owner_email, owner_email),
         )
     if result.rowcount:
         log_security_event("VAULT_DELETE", owner_email, "Credential record deleted")
@@ -363,14 +463,17 @@ def reset_vault_data():
 
 def get_user_credits(email):
     with get_db() as conn:
-        row = conn.execute("SELECT ether_credits FROM users WHERE email=?", (email,)).fetchone()
-    return row[0] if row else 0
+        row = conn.execute(
+            "SELECT ether_credits, status FROM users WHERE email=?",
+            (email,),
+        ).fetchone()
+    return int(row[0]) if row and row[1] == "active" else 0
 
 
 def use_credit(email):
     with get_db() as conn:
         result = conn.execute(
-            "UPDATE users SET ether_credits=ether_credits-1 WHERE email=? AND ether_credits>0",
+            "UPDATE users SET ether_credits=ether_credits-1 WHERE email=? AND ether_credits>0 AND status='active'",
             (email,),
         )
     if result.rowcount:
@@ -383,7 +486,7 @@ def refund_credit(email):
     """Restore one credit when the associated Oracle archive fails."""
     with get_db() as conn:
         result = conn.execute(
-            "UPDATE users SET ether_credits=ether_credits+1 WHERE email=?",
+            "UPDATE users SET ether_credits=ether_credits+1 WHERE email=? AND status='active'",
             (email,),
         )
     if result.rowcount:
@@ -397,7 +500,7 @@ def grant_gems(email, gem_count):
         return False
     with get_db() as conn:
         result = conn.execute(
-            "UPDATE users SET ether_credits=ether_credits+? WHERE email=?",
+            "UPDATE users SET ether_credits=ether_credits+? WHERE email=? AND status='active'",
             (gem_count, email),
         )
     if result.rowcount:
@@ -408,21 +511,52 @@ def grant_gems(email, gem_count):
 
 # ------------------------------- Payment ledger ----------------------------
 
-def log_transaction(email, amount, status="PENDING", image_path=None):
-    """Insert every payment submission as PENDING, regardless of AI verdict."""
+def log_transaction(email, amount, status="PENDING", image_path=None, sentinel_result=None):
+    """Persist screenshot and optional AI advisory; manual Warden review is mandatory."""
     if isinstance(amount, bool) or not isinstance(amount, int) or amount < 10 or amount > 100000 or amount % 10 != 0:
         raise ValueError("Transaction amount must be a multiple of 10 from 10 to 100000 INR.")
+
+    advisory = sentinel_result if isinstance(sentinel_result, dict) else {}
+    allowed = {"VERIFIED", "SUSPICIOUS", "UNREADABLE", "PENDING_ADMIN_REVIEW"}
+    verdict = advisory.get("verdict")
+    if not isinstance(verdict, str) or verdict not in allowed:
+        verdict = "PENDING_ADMIN_REVIEW"
+    try:
+        confidence = float(advisory.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    if confidence != confidence or confidence in (float("inf"), float("-inf")):
+        confidence = 0.0
+    confidence = min(1.0, max(0.0, confidence))
+    amount_detected = str(advisory.get("amount_detected", "N/A"))[:80]
+    findings = ""
+    if isinstance(advisory.get("findings"), list):
+        findings = "\n".join(
+            str(item).strip()[:180]
+            for item in advisory["findings"][:5]
+            if isinstance(item, (str, int, float)) and str(item).strip()
+        )
+    recipient = advisory.get("recipient_match")
+    recipient_match = int(recipient) if isinstance(recipient, bool) else None
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
     with get_db() as conn:
         cursor = conn.execute(
-            "INSERT INTO transactions (user_email, amount, timestamp, status, image_path) "
-            "VALUES (?, ?, ?, 'PENDING', ?)",
-            (email, amount, now, image_path),
+            "INSERT INTO transactions "
+            "(user_email, amount, timestamp, status, image_path, ai_verdict, ai_confidence, "
+            "ai_findings, ai_amount_detected, ai_recipient_match) "
+            "SELECT ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, ? "
+            "WHERE EXISTS (SELECT 1 FROM users WHERE email=? AND status='active')",
+            (
+                email, amount, now, image_path, verdict, confidence, findings,
+                amount_detected, recipient_match, email,
+            ),
         )
+        if cursor.rowcount != 1:
+            raise PermissionError("This identity is suspended or no longer active.")
         transaction_id = cursor.lastrowid
     log_security_event("CREDIT_PURCHASE", email, f"Payment submitted for manual review: INR {amount}")
     return transaction_id
-
 
 def get_pending_transactions():
     with get_db() as conn:
@@ -436,12 +570,14 @@ def approve_transaction(t_id):
     try:
         with get_db() as conn:
             row = conn.execute(
-                "SELECT user_email, amount FROM transactions WHERE id=? AND status='PENDING'",
+                "SELECT t.user_email, t.amount, u.status FROM transactions AS t "
+                "JOIN users AS u ON u.email=t.user_email "
+                "WHERE t.id=? AND t.status='PENDING'",
                 (t_id,),
             ).fetchone()
-            if not row:
+            if not row or row[2] != "active":
                 return False
-            email, amount = row
+            email, amount = row[0], row[1]
             if not isinstance(amount, int) or amount < 10:
                 return False
             changed = conn.execute(
@@ -452,7 +588,7 @@ def approve_transaction(t_id):
                 return False
             credits = amount // 10
             credit_update = conn.execute(
-                "UPDATE users SET ether_credits=ether_credits+? WHERE email=?",
+                "UPDATE users SET ether_credits=ether_credits+? WHERE email=? AND status='active'",
                 (credits, email),
             )
             if credit_update.rowcount != 1:
