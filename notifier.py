@@ -206,11 +206,22 @@ def format_timestamp(timestamp_str):
 
 
 def get_admin_contact():
-    """Return an optional administrator contact configured outside source control."""
+    """Return the administrator contact from Streamlit secrets or local .env."""
     import os
+
     try:
         from dotenv import load_dotenv
         load_dotenv()
     except ImportError:
         pass
-    return os.getenv("ADMIN_CONTACT", "")
+
+    # Community Cloud stores configured values in st.secrets, not os.environ.
+    try:
+        value = st.secrets.get("ADMIN_CONTACT")
+        if value:
+            return str(value).strip()
+    except Exception:
+        # Local runs may not have a Streamlit secrets file configured.
+        pass
+
+    return os.getenv("ADMIN_CONTACT", "").strip()
