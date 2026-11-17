@@ -441,8 +441,8 @@ if current_status == "banned":
         "credits, and account actions."
     )
     contact_name = _get_app_setting("ADMIN_CONTACT_NAME", "Sayar Bhattacharyya")
-    contact_email = _get_app_setting("ADMIN_CONTACT_EMAIL")
-    contact_phone = _get_app_setting("ADMIN_CONTACT_PHONE")
+    contact_email = _get_app_setting("ADMIN_CONTACT_EMAIL", "sayarbhattacharyya68@gmail.com")
+    contact_phone = _get_app_setting("ADMIN_CONTACT_PHONE", "+91 8910162728")
     contact_url = _get_app_setting(
         "ADMIN_CONTACT_URL",
         "https://github.com/sayarbhattacharyya68-ai",
