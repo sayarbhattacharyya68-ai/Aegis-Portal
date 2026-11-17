@@ -47,6 +47,17 @@ def test_vault_round_trip_and_wrong_key(temp_db):
     records = db.fetch_accounts("owner@example.test", "master-key")
     assert len(records) == 1
     assert records[0]["Password"] == "vault-secret-value"
+    assert records[0]["Site"] == "mail service"
+    assert records[0]["User"] == "owner"
+    with db.get_db() as conn:
+        raw = conn.execute(
+            "SELECT site, username, password, encryption_version FROM accounts WHERE owner_email=?",
+            ("owner@example.test",),
+        ).fetchone()
+    assert raw[0] != "mail service"
+    assert raw[1] != "owner"
+    assert raw[2] != "vault-secret-value"
+    assert raw[3] == 2
     assert db.fetch_accounts("owner@example.test", "wrong-key") is None
 
 
@@ -61,6 +72,17 @@ def test_legacy_owner_email_salt_remains_readable(temp_db):
         )
     rows = db.fetch_accounts(owner, "old-master-key")
     assert rows and rows[0]["Password"] == "old-vault-secret"
+    assert rows[0]["Site"] == "legacy service"
+    assert rows[0]["User"] == "legacy user"
+    with db.get_db() as conn:
+        upgraded = conn.execute(
+            "SELECT site, username, password, encryption_version FROM accounts WHERE owner_email=?",
+            (owner,),
+        ).fetchone()
+    assert upgraded[0] != "legacy service"
+    assert upgraded[1] != "legacy user"
+    assert upgraded[2] != "old-vault-secret"
+    assert upgraded[3] == 2
 
 
 def test_account_edit_and_delete_are_owner_scoped(temp_db):
@@ -71,7 +93,13 @@ def test_account_edit_and_delete_are_owner_scoped(temp_db):
     assert db.update_account(row_id, "changed", "new-secret", "master", "attacker@example.test") is False
     assert db.delete_account(row_id, "attacker@example.test") is False
     assert db.fetch_accounts("owner@example.test", "master")[0]["Password"] == "secret"
-    assert db.update_account(row_id, "changed", "new-secret", "master", "owner@example.test") is True
+    assert db.update_account(
+        row_id, "changed", "new-secret", "master", "owner@example.test", new_site="updated service"
+    ) is True
+    edited = db.fetch_accounts("owner@example.test", "master")[0]
+    assert edited["Site"] == "updated service"
+    assert edited["User"] == "changed"
+    assert edited["Password"] == "new-secret"
     assert db.delete_account(row_id, "owner@example.test") is True
     assert db.fetch_accounts("owner@example.test", "master") == []
 
@@ -86,6 +114,41 @@ def test_transaction_approval_is_atomic_and_idempotent(temp_db):
     assert db.approve_transaction(transaction_id) is False
     assert db.get_user_credits(owner) == starting_credits + 5
     assert db.get_pending_transactions() == []
+
+
+def test_payment_advisory_is_saved_but_transaction_stays_pending(temp_db):
+    owner = "payer@example.test"
+    insert_test_user(owner)
+    transaction_id = db.log_transaction(
+        owner, 50, "VERIFIED", "audit_screenshots/example.jpg",
+        {
+            "verdict": "VERIFIED",
+            "confidence": 0.97,
+            "amount_detected": "INR 50.00",
+            "recipient_match": True,
+            "findings": ["Amount matches", "Recipient matches"],
+        },
+    )
+    row = db.get_pending_transactions()[0]
+    assert row[0] == transaction_id
+    assert row[4] == "PENDING"
+    assert row[8] == "VERIFIED"
+    assert row[9] == pytest.approx(0.97)
+    assert "Amount matches" in row[10]
+    assert row[11] == "INR 50.00"
+    assert row[12] == 1
+    assert db.get_user_credits(owner) == 5
+
+
+def test_banned_user_cannot_submit_or_receive_payment_approval(temp_db):
+    owner = "banned-payer@example.test"
+    insert_test_user(owner)
+    tx_id = db.log_transaction(owner, 50, "PENDING", None)
+    assert db.update_user_status(owner, "banned") is True
+    with pytest.raises(PermissionError):
+        db.log_transaction(owner, 50, "PENDING", None)
+    assert db.approve_transaction(tx_id) is False
+    assert db.get_user_credits(owner) == 0
 
 
 def test_rejection_does_not_grant_credits(temp_db):
@@ -106,14 +169,27 @@ def test_invalid_credit_and_transaction_amounts_are_rejected(temp_db):
         db.log_transaction("user@example.test", -10)
 
 
-def test_ban_removes_account_and_user_in_one_operation(temp_db):
+def test_ban_retains_identity_and_records_but_blocks_user_actions(temp_db):
     owner = "owner@example.test"
     insert_test_user(owner)
     db.save_account(owner, "service", "user", "secret", "master")
+    transaction_id = db.log_transaction(owner, 50, "PENDING", None)
     assert db.update_user_status(owner, "banned") is True
     assert db.check_status(owner) == "banned"
+    assert db.fetch_accounts(owner, "master") is None
+    assert db.get_user_credits(owner) == 0
+    assert db.use_credit(owner) is False
+    assert db.update_account(1, "changed", "new-secret", "master", owner, new_site="new service") is False
+    assert db.delete_account(1, owner) is False
+    assert db.approve_transaction(transaction_id) is False
     with db.get_db() as conn:
-        assert conn.execute("SELECT COUNT(*) FROM accounts WHERE owner_email=?", (owner,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM users WHERE email=?", (owner,)).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM accounts WHERE owner_email=?", (owner,)).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM transactions WHERE user_email=?", (owner,)).fetchone()[0] == 1
+    with pytest.raises(PermissionError):
+        db.save_account(owner, "another", "user", "secret", "master")
+    with pytest.raises(PermissionError):
+        db.log_transaction(owner, 50, "PENDING", None)
 
 
 def test_oracle_credit_refund_restores_one_credit(temp_db):

@@ -1,6 +1,6 @@
 """
 ╔══════════════════════════════════════════════════════════════╗
-║  AEGIS-PORTAL: PRIMARY UI ORCHESTRATOR                      ║
+║  AEGIS-PORTAL: PRIMARY UI ORCHESTRATOR                       ║
 ║  main.py — The Command Center (Glassmorphism Theme)          ║
 ║                                                              ║
 ║  Features: Mesh gradients, frosted glass UI, Z-axis depth,   ║
@@ -345,6 +345,8 @@ if st.session_state.pop("clear_vault_key_next_run", False):
 if st.session_state.pop("clear_oracle_secrets_next_run", False):
     st.session_state["oracle_password_input"] = ""
     st.session_state["oracle_master_key_input"] = ""
+    st.session_state["oracle_site_input"] = ""
+    st.session_state["oracle_user_input"] = ""
 
 if st.session_state.logged_in:
     now_epoch = time.time()
@@ -386,11 +388,13 @@ if not st.session_state.logged_in:
                         st.error("🚨 Invalid Identity Format. Please use a valid email address.")
                     else:
                         status = authenticate_user(email, pw)
-                        if status in ['active', 'warned', 'lockdown']:
+                        if status in ['active', 'warned', 'lockdown', 'banned']:
                             st.session_state.logged_in = True
                             st.session_state.user_email = email
                             st.session_state.last_activity = time.time()
-                            if status == 'warned':
+                            if status == 'banned':
+                                notify("login_banned", notify_type="error")
+                            elif status == 'warned':
                                 notify("login_warned", notify_type="warning")
                             elif status == 'lockdown':
                                 notify("login_lockdown", notify_type="error")
@@ -423,22 +427,41 @@ if not st.session_state.logged_in:
 #  5. THE WARDEN's PERIMETER CHECK
 # ─────────────────────────────────────────────
 
-# Update presence
-update_heartbeat(st.session_state.user_email)
-
-# Verify standing
+# Check account status before rendering any portal module or sidebar action.
 current_status = check_status(st.session_state.user_email)
-if current_status == 'banned':
-    st.session_state.logged_in = False
-    st.session_state.user_email = None
-    st.session_state.last_activity = None
+if current_status == "banned":
+    _clear_sensitive_session()
     st.session_state.admin_access_logged = False
     st.session_state.admin_authenticated = False
-    if "admin_key_input" in st.session_state:
-        st.session_state.admin_key_input = ""
-    _clear_sensitive_session()
-    trigger_lockdown("Identity revocation detected during active session.")
-    st.rerun()
+    st.title("🚫 Identity Access Suspended")
+    st.error(
+        "This account has been banned by the Aegis Warden. You may sign in only to view this announcement. "
+        "All portal privileges and functions are disabled, including Archive Vault, Aegis Oracle, Credit-Bay, "
+        "credits, and account actions."
+    )
+    contact_name = _get_app_setting("ADMIN_CONTACT_NAME", "Sayar Bhattacharyya")
+    contact_email = _get_app_setting("ADMIN_CONTACT_EMAIL")
+    contact_phone = _get_app_setting("ADMIN_CONTACT_PHONE")
+    contact_url = _get_app_setting(
+        "ADMIN_CONTACT_URL",
+        "https://github.com/sayarbhattacharyya68-ai",
+    )
+    st.markdown("### Contact the Administrator")
+    st.write(f"**Administrator:** {contact_name}")
+    st.write(f"**Email:** {contact_email or 'Not configured'}")
+    st.write(f"**Phone:** {contact_phone or 'Not configured'}")
+    if isinstance(contact_url, str) and contact_url.startswith(("https://", "http://")):
+        st.link_button("Contact Sayar / Aegis Administrator", contact_url)
+    st.caption("Only an authorized administrator can restore this account.")
+    if st.button("Log Out", type="primary"):
+        st.session_state.logged_in = False
+        st.session_state.user_email = None
+        st.session_state.last_activity = None
+        _clear_sensitive_session()
+        st.rerun()
+    st.stop()
+
+update_heartbeat(st.session_state.user_email)
 
 if current_status == 'warned':
     st.warning("⚠️ **Administrator Warning**: Your recent activity has been flagged. Please adhere to security protocols.", icon="⚠️")
@@ -579,40 +602,84 @@ with st.sidebar.expander("⚙️ Admin Terminal", expanded=False):
                 if w3.button("🔒 Engage Lockdown", use_container_width=True):
                     update_user_status(target, "lockdown")
                     st.rerun()
-                confirm_identity_purge = st.checkbox(
-                    "I understand that purging permanently deletes this identity and its records.",
-                    key=f"confirm_identity_purge_{target}",
+                confirm_identity_ban = st.checkbox(
+                    "I understand this bans the account while retaining records for administrator audit.",
+                    key=f"confirm_identity_ban_{target}",
                 )
-                if w4.button("💥 Purge Identity", use_container_width=True, type="primary", disabled=not confirm_identity_purge):
-                    update_user_status(target, "banned")
+                if w4.button("🚫 Ban Account", use_container_width=True, type="primary", disabled=not confirm_identity_ban):
+                    if update_user_status(target, "banned"):
+                        notify_admin_action("Banned account", target)
                     st.rerun()
 
         with admin_tab2:
             pending = get_pending_transactions()
+            st.info(
+                "Warden review queue: inspect the original payment screenshot and AI findings. "
+                "AI cannot approve payments or grant credits; a human administrator makes the final decision."
+            )
             if not pending:
                 st.info("No pending transactions.")
-            
+
             for p in pending:
                 st.markdown(f"**Transaction #{p[0]}**")
                 st.markdown(f"Identity: `{p[1]}`")
                 st.markdown(f"Amount: **₹{p[2]}**")
-                
+                verdict = p[8] if len(p) > 8 and p[8] else "PENDING_ADMIN_REVIEW"
+                display = get_sentinel_verdict_display(verdict)
+                confidence = float(p[9] or 0.0) if len(p) > 9 else 0.0
+                st.markdown(
+                    f"**AI advisory:** {display['icon']} "
+                    f"<span style='color:{display['color']}'>{display['label']}</span>",
+                    unsafe_allow_html=True,
+                )
+                st.caption(f"AI confidence: {confidence:.0%}")
+                if len(p) > 11:
+                    st.caption(f"AI detected amount: {p[11] or 'Unavailable'}")
+                if len(p) > 12 and p[12] is not None:
+                    st.caption(f"AI recipient match: {'Yes' if p[12] else 'No'}")
+                if len(p) > 10 and p[10]:
+                    st.write("AI findings:")
+                    for finding in str(p[10]).splitlines():
+                        st.write(f"• {finding}")
+
                 image_path = _safe_screenshot_path(p[5]) if len(p) > 5 else None
                 if image_path:
-                    st.image(str(image_path), use_container_width=True)
-                
+                    st.image(
+                        str(image_path),
+                        use_container_width=True,
+                        caption="Original payment screenshot submitted by the user — manual verification required",
+                    )
+                else:
+                    st.error("Original payment screenshot is unavailable. Approval and rejection are disabled.")
+
+                reviewed = st.checkbox(
+                    "I have personally reviewed the original screenshot and transaction details.",
+                    key=f"warden_reviewed_{p[0]}",
+                )
                 c1, c2 = st.columns(2)
-                if c1.button("✅ Approve", key=f"app_{p[0]}", use_container_width=True):
+                if c1.button(
+                    "✅ Approve and Grant Credits",
+                    key=f"app_{p[0]}",
+                    use_container_width=True,
+                    disabled=not (reviewed and image_path),
+                ):
                     if approve_transaction(p[0]):
                         if image_path:
                             image_path.unlink(missing_ok=True)
                         clear_transaction_image_path(p[0])
+                        notify_admin_action("Payment manually approved", p[1])
                     st.rerun()
-                if c2.button("❌ Reject", key=f"rej_{p[0]}", use_container_width=True):
+                if c2.button(
+                    "❌ Reject Payment",
+                    key=f"rej_{p[0]}",
+                    use_container_width=True,
+                    disabled=not (reviewed and image_path),
+                ):
                     if reject_transaction(p[0]):
                         if image_path:
                             image_path.unlink(missing_ok=True)
                         clear_transaction_image_path(p[0])
+                        notify_admin_action("Payment manually rejected", p[1])
                     st.rerun()
                 st.markdown("---")
 
@@ -643,7 +710,11 @@ with st.sidebar.expander("⚙️ Admin Terminal", expanded=False):
 
 if module == "📂 Archive Vault":
     st.title("📂 Archive Vault")
-    st.markdown("Encrypted credential storage. Decrypted entries and the active key remain in server-side session memory while the vault is unlocked.")
+    st.markdown(
+        "Newly archived service names, usernames, and passwords are encrypted with Fernet. "
+        "The key is derived from your Master Vault Key and the fresh random salt stored with each record. "
+        "Use the same Master Vault Key you entered in Aegis Oracle. Older records migrate after a correct unlock."
+    )
     vault_notice = st.session_state.pop("vault_notice", None)
     if vault_notice == "unlocked":
         st.success("Vault unlocked. The input key has been cleared from the form.")
@@ -654,7 +725,12 @@ if module == "📂 Archive Vault":
         st.markdown("### Shard Decryption Protocol")
         col1, col2 = st.columns([3, 1])
         with col1:
-            input_key = st.text_input("Enter Secret Shard Key", type="password", key="vault_master_key_input", help="The Master Cipher required to decrypt your vault.")
+            input_key = st.text_input(
+            "Enter Master Vault Key",
+            type="password",
+            key="vault_master_key_input",
+            help="Enter the exact Master Vault Key you used when archiving credentials in Aegis Oracle.",
+        )
         with col2:
             st.markdown("<br>", unsafe_allow_html=True)
             decrypt_btn = st.button("🔓 Decrypt Shard Vault", use_container_width=True)
@@ -686,25 +762,44 @@ if module == "📂 Archive Vault":
         else:
             for entry in st.session_state.decrypted_shard:
                 with st.expander(f"🔹 {entry['Site']}", expanded=False):
-                    edit_col1, edit_col2 = st.columns(2)
+                    edit_col1, edit_col2, edit_col3 = st.columns(3)
                     with edit_col1:
-                        new_u = st.text_input("Designation (User)", entry['User'], key=f"u_{entry['id']}")
+                        new_site = st.text_input("Service Identifier", entry['Site'], key=f"site_{entry['id']}")
                     with edit_col2:
+                        new_u = st.text_input("Designation (User)", entry['User'], key=f"u_{entry['id']}")
+                    with edit_col3:
                         new_p = st.text_input("Cipher (Password)", entry['Password'], type="password", key=f"p_{entry['id']}")
-                    
-                    btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 2])
+
+                    btn_col1, btn_col2 = st.columns(2)
                     with btn_col1:
-                        if st.button("💾 Synchronize", key=f"s_{entry['id']}", use_container_width=True):
-                            if update_account(entry['id'], new_u, new_p, st.session_state.active_key, st.session_state.user_email):
+                        if st.button("💾 Save Changes", key=f"save_{entry['id']}", use_container_width=True):
+                            if update_account(
+                                entry['id'], new_u, new_p, st.session_state.active_key,
+                                st.session_state.user_email, new_site=new_site,
+                            ):
                                 notify("shard_updated", notify_type="success")
-                                st.session_state.decrypted_shard = fetch_accounts(st.session_state.user_email, st.session_state.active_key)
+                                st.session_state.decrypted_shard = fetch_accounts(
+                                    st.session_state.user_email, st.session_state.active_key
+                                )
                                 st.rerun()
+                            else:
+                                st.error("The credential changes could not be saved.")
                     with btn_col2:
-                        confirm_delete = st.checkbox("Confirm delete", key=f"confirm_d_{entry['id']}")
-                        if st.button("🗑️ Erase", key=f"d_{entry['id']}", use_container_width=True, disabled=not confirm_delete):
+                        confirm_delete = st.checkbox(
+                            "Confirm permanent deletion",
+                            key=f"confirm_d_{entry['id']}",
+                        )
+                        if st.button(
+                            "🗑️ Delete Credential",
+                            key=f"d_{entry['id']}",
+                            use_container_width=True,
+                            disabled=not confirm_delete,
+                        ):
                             if delete_account(entry['id'], st.session_state.user_email):
                                 notify("shard_deleted", notify_type="warning")
-                                st.session_state.decrypted_shard = fetch_accounts(st.session_state.user_email, st.session_state.active_key)
+                                st.session_state.decrypted_shard = fetch_accounts(
+                                    st.session_state.user_email, st.session_state.active_key
+                                )
                                 st.rerun()
 
 # ─────────────────────────────────────────────
@@ -713,56 +808,64 @@ if module == "📂 Archive Vault":
 
 elif module == "🔮 AI Oracle":
     st.title("🔮 The Aegis Oracle")
-    st.markdown("Gemini-assisted explanations with local-first password security analysis")
+    st.markdown(
+        "Run the security assessment first. Archiving is a separate optional action; "
+        "analysis never stores a credential automatically."
+    )
 
-    previous_oracle_result = st.session_state.pop("oracle_result", None)
-    previous_oracle_error = st.session_state.pop("oracle_error", None)
-    if previous_oracle_result:
+    oracle_result = st.session_state.get("oracle_result")
+    oracle_error = st.session_state.pop("oracle_error", None)
+    archive_notice = st.session_state.pop("oracle_archive_notice", None)
+    if oracle_result:
         st.markdown("---")
         st.markdown(
-            f"### Oracle Assessment: <span style='color:{previous_oracle_result['color']}'>{previous_oracle_result['grade']}</span>",
+            f"### Oracle Assessment: <span style='color:{oracle_result['color']}'>{oracle_result['grade']}</span>",
             unsafe_allow_html=True,
         )
-        st.info(previous_oracle_result["analysis"])
-        st.success("✅ Credential successfully encrypted in your vault.")
-    if previous_oracle_error:
-        st.error(previous_oracle_error)
-    
+        st.info(oracle_result["analysis"])
+        st.caption("Analysis complete. No credential is archived unless you separately choose Archive Encrypted Credential.")
+    if archive_notice:
+        st.success(archive_notice)
+    if oracle_error:
+        st.error(oracle_error)
+
     with st.container():
         st.markdown("### Submission Terminal")
-        site = st.text_input("Service Identifier (e.g., Target System)")
-        user = st.text_input("Identity Designation")
+        site = st.text_input("Service Identifier (e.g., Target System)", key="oracle_site_input")
+        user = st.text_input("Identity Designation", key="oracle_user_input")
         pwd = st.text_input("Payload Cipher (Password)", type="password", key="oracle_password_input")
-        
         st.markdown("---")
-        master_key = st.text_input("Master Vault Key", type="password", key="oracle_master_key_input", help="The key used locally to encrypt your vault record.")
+        master_key = st.text_input(
+            "Master Vault Key (required only for archiving)",
+            type="password",
+            key="oracle_master_key_input",
+            help="This master key and a fresh per-record salt derive the Fernet encryption key.",
+        )
         allow_ai_explanation = st.checkbox(
             "Optional: send non-reversible password characteristics (never the password) to Google Gemini for an explanation.",
             value=False,
         )
-        
-        col1, col2 = st.columns([1, 3])
-        with col1:
-            analyze_btn = st.button("🚀 Analyze & Archive", type="primary", use_container_width=True)
-            
+
+        left, right = st.columns(2)
+        with left:
+            analyze_btn = st.button("🧠 Analyze with AI", type="primary", use_container_width=True)
+        with right:
+            archive_btn = st.button("🔐 Archive Encrypted Credential", use_container_width=True)
+
         if analyze_btn:
-            if not site or not user or not pwd or not master_key:
-                st.warning("🚨 All parameters (including your Master Vault Key) are required for Oracle consultation.")
-            elif len(site) > 200 or len(user) > 254 or len(pwd) > 4096 or len(master_key) > 4096:
+            if not site.strip() or not user.strip() or not pwd:
+                st.warning("Enter service, identity, and password before analysis.")
+            elif len(site) > 200 or len(user) > 254 or len(pwd) > 4096:
                 st.error("One or more fields exceed the supported length. Shorten the input and try again.")
             elif use_credit(st.session_state.user_email):
                 try:
-                    with st.spinner("Oracle is performing entropy analysis..."):
+                    with st.spinner("Aegis Oracle is analyzing the credential..."):
                         analysis = get_oracle_analysis(pwd, allow_ai=allow_ai_explanation)
                         grade, color = get_oracle_grade(analysis)
-                        save_account(st.session_state.user_email, site, user, pwd, master_key)
                     st.session_state.oracle_result = {
-                        "analysis": analysis,
-                        "grade": grade,
-                        "color": color,
+                        "analysis": analysis, "grade": grade, "color": color
                     }
-                    st.session_state.clear_oracle_secrets_next_run = True
-                    toast("shard_saved")
+                    st.session_state.oracle_error = None
                     st.rerun()
                 except Exception:
                     try:
@@ -770,16 +873,34 @@ elif module == "🔮 AI Oracle":
                     except Exception:
                         refunded = False
                     st.session_state.oracle_error = (
-                        "The credential could not be archived. The Ether-Credit was restored."
+                        "The analysis could not be completed. The Ether-Credit was restored."
                         if refunded else
-                        "The credential could not be archived. The credit balance could not be confirmed; contact the administrator before retrying."
+                        "The analysis failed and the credit balance could not be confirmed. Contact the administrator before retrying."
                     )
-                    st.session_state.clear_oracle_secrets_next_run = True
                     st.rerun()
             elif get_user_credits(st.session_state.user_email) <= 0:
                 notify("no_credits", notify_type="error")
             else:
                 st.warning("The credit could not be reserved. Please retry once.")
+
+        if archive_btn:
+            if not site.strip() or not user.strip() or not pwd or not master_key:
+                st.warning("Enter service, identity, password, and Master Vault Key to archive this credential.")
+            elif len(site) > 200 or len(user) > 254 or len(pwd) > 4096 or len(master_key) > 4096:
+                st.error("One or more fields exceed the supported length. Shorten the input and try again.")
+            else:
+                try:
+                    with st.spinner("Encrypting all credential fields using your Master Vault Key and a fresh salt..."):
+                        save_account(st.session_state.user_email, site, user, pwd, master_key)
+                    st.session_state.oracle_archive_notice = (
+                        "Credential archived. Service, username, and password are encrypted. "
+                        "Use the same Master Vault Key to unlock it in Archive Vault."
+                    )
+                    st.session_state.clear_oracle_secrets_next_run = True
+                    toast("shard_saved")
+                    st.rerun()
+                except Exception:
+                    st.error("The credential could not be archived. No plaintext credential was stored in the vault.")
 
 # ─────────────────────────────────────────────
 #  10. MODULE 3: CREDIT-BAY
@@ -789,11 +910,11 @@ elif module == "🔋 Credit-Bay":
     st.title("🔋 Credit-Bay Operations")
     st.markdown("Acquire Ether-Credits to power the Aegis Oracle. Conversion: `₹10 = 1 EC`.")
 
-    qr_path = Path(_get_app_setting("PAYMENT_QR_IMAGE", "my_upi_qr.jpeg"))
+    qr_path = Path(_get_app_setting("PAYMENT_QR_IMAGE", "Sayar_UPI.jpeg"))
     if not qr_path.is_absolute():
         qr_path = (BASE_DIR / qr_path).resolve()
-    recipient_name = _get_app_setting("PAYMENT_RECIPIENT_NAME")
-    recipient_vpa = _get_app_setting("PAYMENT_RECIPIENT_VPA")
+    recipient_name = _get_app_setting("PAYMENT_RECIPIENT_NAME", "Sayar Bhattacharyya")
+    recipient_vpa = _get_app_setting("PAYMENT_RECIPIENT_VPA", "sayarbhattacharyya9@okhdfcbank")
 
     col_qr, col_form = st.columns([1, 1.5])
     with col_qr:
@@ -815,17 +936,15 @@ elif module == "🔋 Credit-Bay":
             st.markdown(f"### 💎 Yield: **{int(amount) // 10} Ether-Credits**")
             shot = st.file_uploader("Upload Transaction Screenshot", type=["jpg", "png", "jpeg"])
             payment_consent = st.checkbox(
-                "I consent to sending this screenshot and the expected payment amount to Google's Gemini API for automated analysis. The image may contain personal or financial information. The AI result is advisory; an administrator makes the final decision.",
+                "Optional: I consent to sending this screenshot and expected amount to Google's Gemini API for an AI pre-check. AI findings are advisory only.",
                 value=False,
             )
 
-            if st.button("🚀 Engage Vision Sentinel", type="primary", use_container_width=True):
+            if st.button("📨 Submit Payment for Warden Review", type="primary", use_container_width=True):
                 if int(amount) % 10 != 0:
                     st.error("Payment amount must be a multiple of ₹10.")
                 elif not shot:
                     st.error("A payment screenshot is required.")
-                elif not payment_consent:
-                    st.warning("Consent is required before any screenshot is sent for external AI analysis.")
                 else:
                     saved_path = None
                     transaction_logged = False
@@ -836,25 +955,52 @@ elif module == "🔋 Credit-Bay":
                         saved_path = UPLOAD_DIR / upload_name
                         saved_path.write_bytes(normalized_image)
                         relative_path = str(saved_path.relative_to(BASE_DIR))
-                        with st.spinner("Vision Sentinel is reviewing the consented screenshot..."):
-                            sentinel_result = verify_payment_screenshot(normalized_image, int(amount))
-                        # Regardless of any AI label, transactions always enter the
-                        # human approval queue as PENDING.
+                        if payment_consent:
+                            try:
+                                with st.spinner("Vision Sentinel is reviewing your consented screenshot..."):
+                                    sentinel_result = verify_payment_screenshot(normalized_image, int(amount))
+                            except Exception:
+                                # AI is advisory: an outage must not discard the user's
+                                # receipt or prevent a manual Warden review.
+                                sentinel_result = {
+                                    "verdict": "PENDING_ADMIN_REVIEW",
+                                    "confidence": 0.0,
+                                    "amount_detected": "AI check unavailable",
+                                    "recipient_match": False,
+                                    "findings": [
+                                        "Automated pre-check failed. The original screenshot has still been queued for manual Warden review."
+                                    ],
+                                }
+                        else:
+                            sentinel_result = {
+                                "verdict": "PENDING_ADMIN_REVIEW",
+                                "confidence": 0.0,
+                                "amount_detected": "Not analyzed",
+                                "recipient_match": False,
+                                "findings": [
+                                    "AI analysis was not authorized. Original screenshot is ready for manual Warden review."
+                                ],
+                            }
                         transaction_id = log_transaction(
                             st.session_state.user_email,
                             int(amount),
                             "PENDING",
                             relative_path,
+                            sentinel_result=sentinel_result,
                         )
                         transaction_logged = True
                         display = get_sentinel_verdict_display(sentinel_result.get("verdict", "PENDING_ADMIN_REVIEW"))
                         st.markdown("---")
                         st.markdown(
-                            f"### Sentinel Advisory: {display['icon']} <span style='color:{display['color']}'>{display['label']}</span>",
+                            f"### Sentinel Advisory: {display['icon']} "
+                            f"<span style='color:{display['color']}'>{display['label']}</span>",
                             unsafe_allow_html=True,
                         )
-                        st.info(f"Transaction #{transaction_id} has been submitted as PENDING. Only an administrator can approve it and grant credits.")
-                        st.caption(f"Confidence: {float(sentinel_result.get('confidence', 0.0)):.0%}")
+                        st.info(
+                            f"Transaction #{transaction_id} remains PENDING. The Warden must inspect the screenshot "
+                            "and manually approve it before credits are granted."
+                        )
+                        st.caption(f"AI confidence: {float(sentinel_result.get('confidence', 0.0)):.0%}")
                         for finding in sentinel_result.get("findings", []):
                             st.write(f"• {finding}")
                     except (ValueError, OSError) as exc:
@@ -864,4 +1010,4 @@ elif module == "🔋 Credit-Bay":
                     except Exception:
                         if saved_path and not transaction_logged:
                             saved_path.unlink(missing_ok=True)
-                        st.error("The screenshot could not be processed. No automated approval was performed.")
+                        st.error("The screenshot could not be processed or queued. No automated approval was performed.")
