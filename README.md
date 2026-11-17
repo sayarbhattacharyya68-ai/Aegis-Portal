@@ -12,12 +12,13 @@ The project retains its dark navy / violet / mint visual identity. Its security 
 ## Features
 
 - **Identity:** bcrypt password hashing, registration, login, status checks, and session idle timeout.
-- **Archive Vault:** SQLite storage of Fernet-encrypted credential values. Account edits and deletes are scoped to the signed-in owner.
-- **Aegis Oracle:** password-strength scoring runs locally. The raw password, its hash, and account identifiers are not sent to Gemini. A user may separately opt in to sending coarse, non-reversible strength characteristics for a text explanation.
+- **Archive Vault:** new records encrypt service name, username, and password using Fernet. PBKDF2-HMAC-SHA256 derives the key from the user's Master Vault Key and a unique random salt stored with each record. Legacy password-only records remain readable and migrate on the first successful unlock. All fields can be edited and entries deleted.
+- **Aegis Oracle:** separate **Analyze with AI** and **Archive Encrypted Credential** actions. Analysis never auto-saves. Archiving is optional and requires the Master Vault Key; the same key opens Archive Vault. Raw passwords, hashes, and account identifiers are not sent to Gemini; users may opt in to sending coarse derived characteristics for explanations.
 - **Vision Sentinel:** image files are type-checked, decoded, dimension/size-limited, normalized, and stripped of EXIF metadata. Uploading a payment screenshot to Gemini requires explicit consent. The AI output is advisory only.
 - **Shard Warden:** sends only allowlisted event types, severity values, and coarse recency to Gemini; it does not send user email addresses, IP addresses, or event descriptions. Its recommendations cannot execute admin operations.
-- **Credit-Bay:** every submitted payment enters the `PENDING` administrator review queue. Credits are granted only by the administrator, and transaction approval is atomic and idempotent.
+- **Credit-Bay:** the original screenshot and AI verdict, confidence, detected amount, recipient-match result, and findings are saved with each transaction. AI pre-check is optional and advisory. Each payment remains `PENDING`; the Warden must inspect the original screenshot, confirm manual review, and explicitly approve or reject it. AI never grants credits.
 - **Admin Terminal:** administrator access is disabled unless `ADMIN_KEY` is configured. Destructive actions require explicit UI confirmation.
+- **Banned identities:** banned users can sign in only to view a suspension announcement and administrator contact link. All other portal features stop before rendering, and database operations block vault, credit, and payment actions. Identity and audit records are retained for administrator review or restoration.
 - **Retention:** uploaded payment screenshots are removed after the configured retention period (default 30 days), and their paths are cleared from the ledger. Screenshots are removed after an administrator approves or rejects a transaction.
 
 ## Project structure
@@ -38,7 +39,7 @@ Aegis-Portal/
 └── .streamlit/config.toml
 ```
 
-The private payment QR image is intentionally not included. Add your own private QR image to the local project directory and configure `PAYMENT_QR_IMAGE` in `.env`. Do not commit it.
+Credit-Bay uses the supplied `Sayar_UPI.jpeg` image by default, with VPA `sayarbhattacharyya9@okhdfcbank`. The payment QR asset is included in this repository at the owner's request.
 
 ## Requirements
 
@@ -130,9 +131,13 @@ streamlit run main.py
 | `GEMINI_TEXT_MODEL` | Oracle explanation / Warden text model | `gemini-3.8-flash` |
 | `GEMINI_VISION_MODEL` | Vision Sentinel multimodal model | `gemini-3.8-flash` |
 | `ADMIN_KEY` | Administrator console credential | No default; admin disabled when absent |
-| `PAYMENT_RECIPIENT_NAME` | Locally configured recipient name for comparison | Unset |
-| `PAYMENT_RECIPIENT_VPA` | Locally configured recipient VPA for comparison | Unset |
-| `PAYMENT_QR_IMAGE` | Path to private payment QR image | `my_upi_qr.jpeg` |
+| `PAYMENT_RECIPIENT_NAME` | Recipient name checked by Sentinel | `Sayar Bhattacharyya` |
+| `PAYMENT_RECIPIENT_VPA` | Recipient VPA checked by Sentinel | `sayarbhattacharyya9@okhdfcbank` |
+| `PAYMENT_QR_IMAGE` | Payment QR image | `Sayar_UPI.jpeg` |
+| `ADMIN_CONTACT_NAME` | Name in the banned-account notice | `Sayar Bhattacharyya` |
+| `ADMIN_CONTACT_EMAIL` | Email in the banned-account notice | Configure before deployment |
+| `ADMIN_CONTACT_PHONE` | Phone in the banned-account notice | Configure before deployment |
+| `ADMIN_CONTACT_URL` | Contact link in the banned-account notice | GitHub profile fallback |
 | `AEGIS_DB_PATH` | Optional SQLite path | Project folder `vault.db` |
 | `AUDIT_UPLOAD_DIR` | Local payment screenshot directory | `audit_screenshots` |
 | `SCREENSHOT_RETENTION_DAYS` | Screenshot retention window | `30` |
@@ -148,7 +153,7 @@ The current vault uses:
 - PBKDF2-HMAC-SHA256 with the existing 100,000 iteration count and the original per-record salt interpretation;
 - SQLite with write-ahead logging.
 
-The implementation deliberately preserves the existing encryption derivation and ciphertext format. The app uses the original project-folder `vault.db` path by default, so an existing database should remain discoverable when the project is extracted into the expected folder. Before updating an existing installation, stop the app and make a separate backup of `vault.db`. Test upgrades against a copy first. Never use a real vault database as a test fixture.
+The implementation preserves PBKDF2-HMAC-SHA256, 100,000 iterations, and Fernet. New records encrypt service, username, and password using each record's stored random salt. Legacy password-only records remain readable and migrate only after a successful unlock with the correct Master Vault Key. Added columns are migrated in place. Back up `vault.db` before updating and test against a copy first.
 
 ## Security notes and limitations
 
@@ -157,6 +162,7 @@ The implementation deliberately preserves the existing encryption derivation and
 3. **Gemini is an external processor:** Oracle opt-in sends only coarse local features. Vision consent sends the normalized screenshot and expected amount to Google's Gemini API. Review Google's current privacy and retention terms before using real financial screenshots.
 4. **AI is not an authority:** Sentinel and Warden outputs never approve payments, grant credits, lock users, ban users, or purge records. Humans must make administrative decisions.
 5. **Admin access is a shared secret:** The current project uses one configured administrator key. For a public production service, replace this with individual administrator accounts, MFA, role-based authorization, secure session management, and audited credential rotation.
+6. **Administrator contact details:** Configure `ADMIN_CONTACT_EMAIL` and `ADMIN_CONTACT_PHONE` in local environment settings or Streamlit secrets before deployment. The GitHub profile is the fallback contact link.
 6. **Deployment storage:** Do not assume a hosted Streamlit filesystem is durable. SQLite files and uploaded screenshots require a persistent disk and a tested backup/restore strategy. Do not store production vaults in ephemeral hosting storage.
 7. **Threat model review remains necessary:** This project has not undergone an independent penetration test, cryptographic audit, dependency audit, or load/concurrency certification.
 
