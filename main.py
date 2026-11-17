@@ -956,8 +956,21 @@ elif module == "🔋 Credit-Bay":
                         saved_path.write_bytes(normalized_image)
                         relative_path = str(saved_path.relative_to(BASE_DIR))
                         if payment_consent:
-                            with st.spinner("Vision Sentinel is reviewing your consented screenshot..."):
-                                sentinel_result = verify_payment_screenshot(normalized_image, int(amount))
+                            try:
+                                with st.spinner("Vision Sentinel is reviewing your consented screenshot..."):
+                                    sentinel_result = verify_payment_screenshot(normalized_image, int(amount))
+                            except Exception:
+                                # AI is advisory: an outage must not discard the user's
+                                # receipt or prevent a manual Warden review.
+                                sentinel_result = {
+                                    "verdict": "PENDING_ADMIN_REVIEW",
+                                    "confidence": 0.0,
+                                    "amount_detected": "AI check unavailable",
+                                    "recipient_match": False,
+                                    "findings": [
+                                        "Automated pre-check failed. The original screenshot has still been queued for manual Warden review."
+                                    ],
+                                }
                         else:
                             sentinel_result = {
                                 "verdict": "PENDING_ADMIN_REVIEW",
