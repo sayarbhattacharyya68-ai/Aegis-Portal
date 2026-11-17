@@ -13,18 +13,24 @@ import os
 import pandas as pd
 import datetime
 import re
+import hmac
+import io
+import time
 import uuid
+from pathlib import Path
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
+from PIL import Image, UnidentifiedImageError
 
 # Import local modules
 from database_logic import (
     setup_security, authenticate_user, create_user, get_all_users,
     update_heartbeat, get_user_credits, use_credit, save_account,
     fetch_accounts, update_account, delete_account, check_status,
-    update_user_status, reset_vault_data, grant_gems, log_transaction,
+    update_user_status, reset_vault_data, grant_gems, refund_credit, log_transaction,
     get_pending_transactions, approve_transaction, reject_transaction,
-    get_security_events, get_dashboard_stats
+    get_security_events, get_dashboard_stats, cleanup_expired_screenshots,
+    clear_transaction_image_path
 )
 from ai_analyser import (
     get_oracle_analysis, get_oracle_grade, verify_payment_screenshot,
@@ -33,33 +39,84 @@ from ai_analyser import (
 )
 from notifier import (
     notify, toast, notify_admin_action, security_alert, 
-    trigger_lockdown, format_event_for_display, get_severity_color,
-    get_admin_contact
+    trigger_lockdown, format_event_for_display, get_severity_color
 )
 
 # Load local environment variables (if any)
 load_dotenv()
 
+BASE_DIR = Path(__file__).resolve().parent
+UPLOAD_DIR = (BASE_DIR / os.getenv("AUDIT_UPLOAD_DIR", "audit_screenshots")).resolve()
+MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024
+SESSION_IDLE_SECONDS = 30 * 60
+
+
+def _get_app_setting(name, default=None):
+    """Read private configuration from Streamlit secrets, then environment."""
+    try:
+        value = st.secrets.get(name)
+        if value:
+            return str(value).strip()
+    except Exception:
+        pass
+    value = os.getenv(name)
+    return value.strip() if value else default
+
+
+def _clear_sensitive_session():
+    """Remove decrypted vault data and schedule sensitive widget values for clearing."""
+    st.session_state.decrypted_shard = None
+    st.session_state.active_key = None
+    st.session_state.clear_vault_key_next_run = True
+    st.session_state.clear_oracle_secrets_next_run = True
+    st.session_state.oracle_result = None
+    st.session_state.oracle_error = None
+
+
+def _prepare_uploaded_screenshot(uploaded_file):
+    """Validate and normalize an uploaded image, stripping EXIF metadata."""
+    if uploaded_file is None:
+        raise ValueError("Select a screenshot first.")
+    raw = uploaded_file.getvalue()
+    if not raw or len(raw) > MAX_SCREENSHOT_BYTES:
+        raise ValueError("Screenshot must be non-empty and no larger than 5 MB.")
+    suffix = Path(uploaded_file.name or "").suffix.lower()
+    if suffix not in {".jpg", ".jpeg", ".png"}:
+        raise ValueError("Only JPG and PNG screenshots are accepted.")
+    try:
+        with Image.open(io.BytesIO(raw)) as probe:
+            expected_format = "PNG" if suffix == ".png" else "JPEG"
+            if probe.format != expected_format:
+                raise ValueError("The file extension does not match the actual image format.")
+            if probe.width > 8000 or probe.height > 8000 or probe.width * probe.height > 20_000_000:
+                raise ValueError("Screenshot dimensions exceed the safe processing limit.")
+            probe.verify()
+        with Image.open(io.BytesIO(raw)) as image:
+            image = image.convert("RGB")
+            output = io.BytesIO()
+            image.save(output, format="JPEG", quality=88, optimize=True)
+            return output.getvalue()
+    except (UnidentifiedImageError, OSError) as exc:
+        raise ValueError("The uploaded screenshot could not be decoded safely.") from exc
+
+
+def _safe_screenshot_path(relative_path):
+    if not relative_path:
+        return None
+    candidate = (BASE_DIR / str(relative_path)).resolve()
+    try:
+        candidate.relative_to(UPLOAD_DIR)
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
+
+
 def is_valid_email(email):
-    """Simple regex for email validation."""
+    """Simple email validation with a bounded input length."""
+    if not isinstance(email, str) or len(email) > 254:
+        return False
     pattern = r'^[\w\.-]+@[\w\.-]+\.\w+$'
     return re.match(pattern, email) is not None
-
-def get_operator_name():
-    try:
-        if "OPERATOR_NAME" in st.secrets:
-            return st.secrets["OPERATOR_NAME"]
-    except Exception:
-        pass
-    return os.getenv("OPERATOR_NAME", "Sayar Bhattacharyya")
-
-def get_operator_vpa():
-    try:
-        if "OPERATOR_VPA" in st.secrets:
-            return st.secrets["OPERATOR_VPA"]
-    except Exception:
-        pass
-    return os.getenv("OPERATOR_VPA", "sayarbhattacharyya9@oksbi")
 
 # ─────────────────────────────────────────────
 #  1. CORE CONFIGURATION
@@ -74,6 +131,11 @@ st.set_page_config(
 
 # Initialize DB schema
 setup_security()
+try:
+    retention_days = int(_get_app_setting("SCREENSHOT_RETENTION_DAYS", "30"))
+except (TypeError, ValueError):
+    retention_days = 30
+cleanup_expired_screenshots(UPLOAD_DIR, retention_days)
 
 # ─────────────────────────────────────────────
 #  2. GLASSMORPHISM DESIGN SYSTEM
@@ -259,15 +321,46 @@ st.markdown("""
 #  3. SESSION STATE INITIALIZATION
 # ─────────────────────────────────────────────
 
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-    st.session_state.user_email = None
+for state_key, default_value in {
+    "logged_in": False,
+    "user_email": None,
+    "decrypted_shard": None,
+    "active_key": None,
+    "last_activity": None,
+    "admin_access_logged": False,
+    "admin_authenticated": False,
+    "admin_auth_failures": 0,
+    "admin_lock_until": 0.0,
+    "admin_auth_error": False,
+    "clear_admin_key_next_run": False,
+}.items():
+    if state_key not in st.session_state:
+        st.session_state[state_key] = default_value
 
-if "decrypted_shard" not in st.session_state:
-    st.session_state.decrypted_shard = None
-    
-if "active_key" not in st.session_state:
-    st.session_state.active_key = None
+# Clear secret-bearing widgets before they are recreated on the next Streamlit run.
+if st.session_state.pop("clear_admin_key_next_run", False):
+    st.session_state["admin_key_input"] = ""
+if st.session_state.pop("clear_vault_key_next_run", False):
+    st.session_state["vault_master_key_input"] = ""
+if st.session_state.pop("clear_oracle_secrets_next_run", False):
+    st.session_state["oracle_password_input"] = ""
+    st.session_state["oracle_master_key_input"] = ""
+
+if st.session_state.logged_in:
+    now_epoch = time.time()
+    previous_activity = st.session_state.last_activity
+    if previous_activity and now_epoch - previous_activity > SESSION_IDLE_SECONDS:
+        st.session_state.logged_in = False
+        st.session_state.user_email = None
+        st.session_state.last_activity = None
+        st.session_state.admin_access_logged = False
+        st.session_state.admin_authenticated = False
+        if "admin_key_input" in st.session_state:
+            st.session_state.admin_key_input = ""
+        _clear_sensitive_session()
+        notify("session_expired", notify_type="warning")
+        st.rerun()
+    st.session_state.last_activity = now_epoch
 
 # ─────────────────────────────────────────────
 #  4. IDENTITY SYNCHRONIZATION (LOGIN)
@@ -284,7 +377,7 @@ if not st.session_state.logged_in:
         
         with t1:
             with st.container():
-                email = st.text_input("Identity Designation (Email)", key="login_email")
+                email = st.text_input("Identity Designation (Email)", key="login_email").strip().lower()
                 pw = st.text_input("Access Cipher", type="password", key="login_pw")
                 submit = st.button("Establish Connection", type="primary", use_container_width=True)
                 
@@ -296,6 +389,7 @@ if not st.session_state.logged_in:
                         if status in ['active', 'warned', 'lockdown']:
                             st.session_state.logged_in = True
                             st.session_state.user_email = email
+                            st.session_state.last_activity = time.time()
                             if status == 'warned':
                                 notify("login_warned", notify_type="warning")
                             elif status == 'lockdown':
@@ -304,15 +398,13 @@ if not st.session_state.logged_in:
                                 notify("login_success", notify_type="success")
                             st.rerun()
                         elif status == 'banned':
-                            security_alert("AUTH_FAILURE", email, "Banned identity attempted session linkage", severity="CRITICAL") # F8 Fix
                             notify("login_banned", notify_type="error")
                         else:
-                            security_alert("AUTH_FAILURE", email, "Failed authentication attempt", severity="WARNING") # F8 Fix
                             notify("login_failed", notify_type="error")
                         
         with t2:
             with st.container():
-                n_email = st.text_input("New Identity Designation", key="reg_email")
+                n_email = st.text_input("New Identity Designation", key="reg_email").strip().lower()
                 n_pw = st.text_input("New Access Cipher", type="password", key="reg_pw")
                 submit = st.button("Forge Identity Shard", use_container_width=True)
                 
@@ -339,6 +431,12 @@ current_status = check_status(st.session_state.user_email)
 if current_status == 'banned':
     st.session_state.logged_in = False
     st.session_state.user_email = None
+    st.session_state.last_activity = None
+    st.session_state.admin_access_logged = False
+    st.session_state.admin_authenticated = False
+    if "admin_key_input" in st.session_state:
+        st.session_state.admin_key_input = ""
+    _clear_sensitive_session()
     trigger_lockdown("Identity revocation detected during active session.")
     st.rerun()
 
@@ -346,9 +444,10 @@ if current_status == 'warned':
     st.warning("⚠️ **Administrator Warning**: Your recent activity has been flagged. Please adhere to security protocols.", icon="⚠️")
 
 if current_status == 'lockdown':
-    # F9 Fix: Use get_admin_contact() helper instead of hardcoding digits
-    admin_contact = get_admin_contact()
-    st.error(f"🔒 **LOCKDOWN ENGAGED**\n\nYour vault access is frozen. Contact the Administrator immediately at **{admin_contact}**.\n\nFailure to comply will result in permanent Identity Purge.", icon="🚨")
+    _clear_sensitive_session()
+    st.session_state.admin_access_logged = False
+    st.session_state.admin_authenticated = False
+    st.error("🔒 **LOCKDOWN ENGAGED**\n\nVault access is frozen. Contact the configured administrator through the official support channel.", icon="🚨")
 
 # ─────────────────────────────────────────────
 #  6. THE COMMAND CENTER (SIDEBAR)
@@ -363,23 +462,7 @@ st.sidebar.metric("Ether-Credits", f"{credits} 💎")
 st.sidebar.markdown(f"**Identity:** `{st.session_state.user_email}`")
 st.sidebar.markdown("---")
 
-# ── MOBILE INSTALL BUTTON ──
-st.sidebar.markdown("""
-    <div id="install-btn-container" style="display: none; padding: 10px; border: 1px solid #94FBAB; border-radius: 10px; background: rgba(148, 251, 171, 0.1); margin-bottom: 20px;">
-        <p style="color: #94FBAB; font-size: 0.8rem; text-align: center; margin-bottom: 10px;">Mobile Portal Available</p>
-        <button onclick="window.parent.postMessage({type: 'trigger_pwa_install'}, '*')" 
-            style="width: 100%; background: #94FBAB; color: #080D24; border: none; padding: 8px; border-radius: 5px; font-weight: bold; cursor: pointer;">
-            📲 INSTALL MOBILE VERSION
-        </button>
-    </div>
-    <script>
-        window.addEventListener('message', (event) => {
-            if (event.data.type === 'pwa_install_ready') {
-                document.getElementById('install-btn-container').style.display = 'block';
-            }
-        });
-    </script>
-""", unsafe_allow_html=True)
+# Mobile installation is intentionally omitted; no service worker is configured.
 
 st.sidebar.markdown("---")
 
@@ -399,8 +482,12 @@ st.sidebar.markdown("---")
 if st.sidebar.button("🔴 Sever Connection", use_container_width=True):
     st.session_state.logged_in = False
     st.session_state.user_email = None
-    st.session_state.decrypted_shard = None
-    st.session_state.active_key = None
+    st.session_state.last_activity = None
+    st.session_state.admin_access_logged = False
+    st.session_state.admin_authenticated = False
+    if "admin_key_input" in st.session_state:
+        st.session_state.admin_key_input = ""
+    _clear_sensitive_session()
     st.rerun()
 
 # ─────────────────────────────────────────────
@@ -408,21 +495,43 @@ if st.sidebar.button("🔴 Sever Connection", use_container_width=True):
 # ─────────────────────────────────────────────
 
 with st.sidebar.expander("⚙️ Admin Terminal", expanded=False):
-    admin_input = st.text_input("Admin Key", type="password")
-    
-    # Load Admin Key securely
-    expected_admin_key = None
-    try:
-        expected_admin_key = st.secrets.get("ADMIN_KEY")
-    except Exception:
-        pass
+    expected_admin_key = _get_app_setting("ADMIN_KEY")
     if not expected_admin_key:
-        expected_admin_key = os.getenv("ADMIN_KEY")
-        
-    is_admin = bool(expected_admin_key) and (admin_input == expected_admin_key)
-
-    if is_admin:
-        notify_admin_action("Terminal accessed")
+        st.session_state.admin_authenticated = False
+        st.session_state.admin_access_logged = False
+        st.warning("Administrator access is disabled. Configure ADMIN_KEY in Streamlit secrets or the local .env file.")
+    elif not st.session_state.admin_authenticated:
+        lock_remaining = max(0, int(st.session_state.admin_lock_until - time.time()))
+        if st.session_state.admin_auth_error:
+            st.error("Administrator authentication failed. Check the key and try again.")
+            st.session_state.admin_auth_error = False
+        if lock_remaining:
+            st.warning(f"Administrator sign-in is temporarily paused. Retry in {lock_remaining} seconds.")
+        admin_input = st.text_input("Admin Key", type="password", key="admin_key_input")
+        if st.button("🔐 Unlock Admin Terminal", use_container_width=True, disabled=bool(lock_remaining)):
+            st.session_state.clear_admin_key_next_run = True
+            if admin_input and hmac.compare_digest(str(admin_input), str(expected_admin_key)):
+                st.session_state.admin_authenticated = True
+                st.session_state.admin_access_logged = False
+                st.session_state.admin_auth_failures = 0
+                st.session_state.admin_lock_until = 0.0
+                st.session_state.admin_auth_error = False
+            else:
+                st.session_state.admin_auth_failures += 1
+                st.session_state.admin_auth_error = True
+                if st.session_state.admin_auth_failures >= 5:
+                    st.session_state.admin_auth_failures = 0
+                    st.session_state.admin_lock_until = time.time() + 30
+            st.rerun()
+    else:
+        if st.button("🔒 Lock Admin Terminal", use_container_width=True):
+            st.session_state.admin_authenticated = False
+            st.session_state.admin_access_logged = False
+            st.session_state.clear_admin_key_next_run = True
+            st.rerun()
+        if not st.session_state.admin_access_logged:
+            notify_admin_action("Terminal accessed")
+        st.session_state.admin_access_logged = True
         st.success("Clearance Accepted.")
         
         admin_tab1, admin_tab2, admin_tab3 = st.tabs(["Identities", "Transactions", "Forensics"])
@@ -432,43 +541,51 @@ with st.sidebar.expander("⚙️ Admin Terminal", expanded=False):
             u_df = pd.DataFrame(all_users, columns=["Email", "EC", "Status", "Presence"])
             st.dataframe(u_df, use_container_width=True, hide_index=True)
 
-            target = st.selectbox("Select Target Identity", u_df["Email"])
-            
-            # Warden Assessment
-            if st.button("👁️ Warden Assessment", use_container_width=True):
-                with st.spinner("Warden analyzing..."):
-                    history = get_security_events(limit=20, email_filter=target)
-                    assessment = warden_assess_identity(target, history)
-                    threat_ui = get_threat_level_display(assessment.get("threat_level"))
-                    
-                    st.markdown(f"**Threat:** {threat_ui['icon']} <span style='color:{threat_ui['color']}'>{assessment.get('threat_level')}</span>", unsafe_allow_html=True)
-                    st.markdown(f"**Score:** {assessment.get('risk_score')}/10.0")
-                    st.info(assessment.get("assessment"))
-                    st.markdown(f"**Recommended Action:** `{assessment.get('recommended_action')}`")
+            if u_df.empty:
+                st.info("No user identities are registered yet.")
+            else:
+                target = st.selectbox("Select Target Identity", u_df["Email"].tolist())
 
-            # Operations
-            gem_amt = st.number_input("Grant EC", min_value=1, step=1, value=5)
-            if st.button("🎁 Dispense Credits", use_container_width=True):
-                grant_gems(target, gem_amt)
-                notify_admin_action(f"Dispensed {gem_amt} EC", target)
-                st.rerun()
+                if st.button("👁️ Warden Assessment", use_container_width=True):
+                    with st.spinner("Warden analyzing sanitized security metadata..."):
+                        history = get_security_events(limit=20, email_filter=target)
+                        assessment = warden_assess_identity(target, history)
+                        threat_ui = get_threat_level_display(assessment.get("threat_level"))
+                        st.markdown(f"**Threat:** {threat_ui['icon']} <span style='color:{threat_ui['color']}'>{assessment.get('threat_level')}</span>", unsafe_allow_html=True)
+                        st.markdown(f"**Score:** {assessment.get('risk_score')}/10.0")
+                        st.write(assessment.get("assessment", "No assessment available."))
+                        st.markdown(f"**Advisory only — recommended action:** `{assessment.get('recommended_action', 'MONITOR')}`")
+                        for indicator in assessment.get("indicators", []):
+                            st.write(f"• {indicator}")
 
-            st.markdown("### Warden Enforcement")
-            w1, w2 = st.columns(2)
-            if w1.button("🟢 Set to Active", use_container_width=True):
-                update_user_status(target, 'active')
-                st.rerun()
-            if w2.button("🟡 Issue Warning", use_container_width=True):
-                update_user_status(target, 'warned')
-                st.rerun()
-                
-            w3, w4 = st.columns(2)
-            if w3.button("🔒 Engage Lockdown", use_container_width=True):
-                update_user_status(target, 'lockdown')
-                st.rerun()
-            if w4.button("💥 Purge Identity", use_container_width=True, type="primary"):
-                update_user_status(target, 'banned')
-                st.rerun()
+                gem_amt = st.number_input("Grant EC", min_value=1, max_value=10000, step=1, value=5)
+                if st.button("🎁 Dispense Credits", use_container_width=True):
+                    if grant_gems(target, int(gem_amt)):
+                        notify_admin_action(f"Dispensed {gem_amt} EC", target)
+                        st.rerun()
+                    else:
+                        st.error("Credit grant could not be completed.")
+
+                st.markdown("### Warden Enforcement — Human Administrator Only")
+                w1, w2 = st.columns(2)
+                if w1.button("🟢 Set to Active", use_container_width=True):
+                    update_user_status(target, "active")
+                    st.rerun()
+                if w2.button("🟡 Issue Warning", use_container_width=True):
+                    update_user_status(target, "warned")
+                    st.rerun()
+
+                w3, w4 = st.columns(2)
+                if w3.button("🔒 Engage Lockdown", use_container_width=True):
+                    update_user_status(target, "lockdown")
+                    st.rerun()
+                confirm_identity_purge = st.checkbox(
+                    "I understand that purging permanently deletes this identity and its records.",
+                    key=f"confirm_identity_purge_{target}",
+                )
+                if w4.button("💥 Purge Identity", use_container_width=True, type="primary", disabled=not confirm_identity_purge):
+                    update_user_status(target, "banned")
+                    st.rerun()
 
         with admin_tab2:
             pending = get_pending_transactions()
@@ -480,30 +597,29 @@ with st.sidebar.expander("⚙️ Admin Terminal", expanded=False):
                 st.markdown(f"Identity: `{p[1]}`")
                 st.markdown(f"Amount: **₹{p[2]}**")
                 
-                if p[5] and os.path.exists(p[5]): 
-                    st.image(p[5], use_container_width=True)
+                image_path = _safe_screenshot_path(p[5]) if len(p) > 5 else None
+                if image_path:
+                    st.image(str(image_path), use_container_width=True)
                 
                 c1, c2 = st.columns(2)
-                # F11 Fix: Pass administrator designation to log who verified
-                if c1.button("✅ Approve", key=f"app_{p[0]}", use_container_width=True): 
-                    approve_transaction(p[0], admin_email="ADMIN_OVERRIDE")
+                if c1.button("✅ Approve", key=f"app_{p[0]}", use_container_width=True):
+                    if approve_transaction(p[0]):
+                        if image_path:
+                            image_path.unlink(missing_ok=True)
+                        clear_transaction_image_path(p[0])
                     st.rerun()
-                if c2.button("❌ Reject", key=f"rej_{p[0]}", use_container_width=True): 
-                    reject_transaction(p[0], admin_email="ADMIN_OVERRIDE")
+                if c2.button("❌ Reject", key=f"rej_{p[0]}", use_container_width=True):
+                    if reject_transaction(p[0]):
+                        if image_path:
+                            image_path.unlink(missing_ok=True)
+                        clear_transaction_image_path(p[0])
                     st.rerun()
                 st.markdown("---")
 
         with admin_tab3:
-            # F7 & F18 Fixes: Invoke warden_heartbeat_check & render full stats breakdown
-            all_users_data = get_all_users()
-            heartbeat = warden_heartbeat_check(all_users_data)
             stats = get_dashboard_stats()
-            
-            st.markdown(f"**Security Posture:** <span style='color:{heartbeat['posture_color']}'>{heartbeat['posture']}</span>", unsafe_allow_html=True)
-            st.markdown(f"**Online Now:** {heartbeat['online_now']} / {heartbeat['total_identities']}")
-            st.markdown(f"**Total Identities:** {stats['total_identities']} (Active: {stats['active_identities']})")
+            st.markdown(f"**Total Identities:** {stats['total_identities']}")
             st.markdown(f"**Encrypted Shards:** {stats['total_shards']}")
-            st.markdown(f"**Pending Ledger Tx:** {stats['pending_transactions']}")
             st.markdown(f"**Critical Events:** <span style='color:#FF6B6B'>{stats['threat_events']}</span>", unsafe_allow_html=True)
             
             if st.button("📑 Refresh Log", use_container_width=True):
@@ -512,9 +628,13 @@ with st.sidebar.expander("⚙️ Admin Terminal", expanded=False):
                 st.dataframe(pd.DataFrame(formatted), use_container_width=True, hide_index=True)
 
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("⚠️ EMERGENCY VAULT PURGE", use_container_width=True, type="primary"):
+            confirm_vault_purge = st.checkbox(
+                "I understand this permanently deletes every stored credential record.",
+                key="confirm_global_vault_purge",
+            )
+            if st.button("⚠️ EMERGENCY VAULT PURGE", use_container_width=True, type="primary", disabled=not confirm_vault_purge):
                 reset_vault_data()
-                st.session_state.decrypted_shard = None
+                _clear_sensitive_session()
                 st.rerun()
 
 # ─────────────────────────────────────────────
@@ -523,13 +643,18 @@ with st.sidebar.expander("⚙️ Admin Terminal", expanded=False):
 
 if module == "📂 Archive Vault":
     st.title("📂 Archive Vault")
-    st.markdown("Zero-Knowledge Cryptographic Storage. Keys are processed in volatile memory only.")
+    st.markdown("Encrypted credential storage. Decrypted entries and the active key remain in server-side session memory while the vault is unlocked.")
+    vault_notice = st.session_state.pop("vault_notice", None)
+    if vault_notice == "unlocked":
+        st.success("Vault unlocked. The input key has been cleared from the form.")
+    elif vault_notice == "wrong_key":
+        st.warning("The supplied vault key could not decrypt the saved records. The key field was cleared.")
     
     with st.container():
         st.markdown("### Shard Decryption Protocol")
         col1, col2 = st.columns([3, 1])
         with col1:
-            input_key = st.text_input("Enter Secret Shard Key", type="password", help="The Master Cipher required to decrypt your vault.")
+            input_key = st.text_input("Enter Secret Shard Key", type="password", key="vault_master_key_input", help="The Master Cipher required to decrypt your vault.")
         with col2:
             st.markdown("<br>", unsafe_allow_html=True)
             decrypt_btn = st.button("🔓 Decrypt Shard Vault", use_container_width=True)
@@ -539,13 +664,20 @@ if module == "📂 Archive Vault":
                 data = fetch_accounts(st.session_state.user_email, input_key)
                 if data is not None:
                     st.session_state.decrypted_shard = data
-                    st.session_state.active_key = input_key 
-                    notify("vault_decrypted", notify_type="success")
-                else: 
-                    notify("vault_wrong_key", notify_type="warning")
-                    st.session_state.decrypted_shard = None
+                    st.session_state.active_key = input_key
+                    st.session_state.vault_notice = "unlocked"
+                    st.session_state.clear_vault_key_next_run = True
+                    st.rerun()
+                else:
+                    st.session_state.vault_notice = "wrong_key"
+                    _clear_sensitive_session()
+                    st.rerun()
 
     if st.session_state.decrypted_shard is not None:
+        lock_col, _ = st.columns([1, 4])
+        if lock_col.button("🔒 Lock Vault", use_container_width=True):
+            _clear_sensitive_session()
+            st.rerun()
         st.markdown("---")
         st.markdown("### 🧬 Active Shards")
         
@@ -563,16 +695,17 @@ if module == "📂 Archive Vault":
                     btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 2])
                     with btn_col1:
                         if st.button("💾 Synchronize", key=f"s_{entry['id']}", use_container_width=True):
-                            if update_account(entry['id'], new_u, new_p, st.session_state.active_key):
+                            if update_account(entry['id'], new_u, new_p, st.session_state.active_key, st.session_state.user_email):
                                 notify("shard_updated", notify_type="success")
                                 st.session_state.decrypted_shard = fetch_accounts(st.session_state.user_email, st.session_state.active_key)
                                 st.rerun()
                     with btn_col2:
-                        if st.button("🗑️ Erase", key=f"d_{entry['id']}", use_container_width=True):
-                            delete_account(entry['id'])
-                            notify("shard_deleted", notify_type="warning")
-                            st.session_state.decrypted_shard = fetch_accounts(st.session_state.user_email, st.session_state.active_key)
-                            st.rerun()
+                        confirm_delete = st.checkbox("Confirm delete", key=f"confirm_d_{entry['id']}")
+                        if st.button("🗑️ Erase", key=f"d_{entry['id']}", use_container_width=True, disabled=not confirm_delete):
+                            if delete_account(entry['id'], st.session_state.user_email):
+                                notify("shard_deleted", notify_type="warning")
+                                st.session_state.decrypted_shard = fetch_accounts(st.session_state.user_email, st.session_state.active_key)
+                                st.rerun()
 
 # ─────────────────────────────────────────────
 #  9. MODULE 2: AI ORACLE
@@ -580,46 +713,73 @@ if module == "📂 Archive Vault":
 
 elif module == "🔮 AI Oracle":
     st.title("🔮 The Aegis Oracle")
-    st.markdown("Adversarial Intelligence Core powered by Llama-3.3-70B via Groq LPU™")
+    st.markdown("Gemini-assisted explanations with local-first password security analysis")
+
+    previous_oracle_result = st.session_state.pop("oracle_result", None)
+    previous_oracle_error = st.session_state.pop("oracle_error", None)
+    if previous_oracle_result:
+        st.markdown("---")
+        st.markdown(
+            f"### Oracle Assessment: <span style='color:{previous_oracle_result['color']}'>{previous_oracle_result['grade']}</span>",
+            unsafe_allow_html=True,
+        )
+        st.info(previous_oracle_result["analysis"])
+        st.success("✅ Credential successfully encrypted in your vault.")
+    if previous_oracle_error:
+        st.error(previous_oracle_error)
     
     with st.container():
         st.markdown("### Submission Terminal")
         site = st.text_input("Service Identifier (e.g., Target System)")
         user = st.text_input("Identity Designation")
-        pwd = st.text_input("Payload Cipher (Password)", type="password")
+        pwd = st.text_input("Payload Cipher (Password)", type="password", key="oracle_password_input")
         
         st.markdown("---")
-        master_key = st.text_input("Master Vault Key", type="password", help="The single Master Key you use to encrypt and decrypt all your shards.")
+        master_key = st.text_input("Master Vault Key", type="password", key="oracle_master_key_input", help="The key used locally to encrypt your vault record.")
+        allow_ai_explanation = st.checkbox(
+            "Optional: send non-reversible password characteristics (never the password) to Google Gemini for an explanation.",
+            value=False,
+        )
         
         col1, col2 = st.columns([1, 3])
         with col1:
-            # F13 read-time freshness check
-            current_credits = get_user_credits(st.session_state.user_email)
             analyze_btn = st.button("🚀 Analyze & Archive", type="primary", use_container_width=True)
             
         if analyze_btn:
             if not site or not user or not pwd or not master_key:
                 st.warning("🚨 All parameters (including your Master Vault Key) are required for Oracle consultation.")
-            elif current_credits > 0:
-                if use_credit(st.session_state.user_email):
+            elif len(site) > 200 or len(user) > 254 or len(pwd) > 4096 or len(master_key) > 4096:
+                st.error("One or more fields exceed the supported length. Shorten the input and try again.")
+            elif use_credit(st.session_state.user_email):
+                try:
                     with st.spinner("Oracle is performing entropy analysis..."):
-                        # 1. Get AI Analysis
-                        analysis = get_oracle_analysis(pwd)
+                        analysis = get_oracle_analysis(pwd, allow_ai=allow_ai_explanation)
                         grade, color = get_oracle_grade(analysis)
-                        
-                        # 2. Display Analysis
-                        st.markdown("---")
-                        st.markdown(f"### Oracle Assessment: <span style='color:{color}'>{grade}</span>", unsafe_allow_html=True)
-                        st.info(analysis)
-                        
-                        # 3. Archive to Vault with Master-Key Verification
-                        if save_account(st.session_state.user_email, site, user, pwd, master_key):
-                            toast("shard_saved")
-                            st.success("✅ Shard successfully encrypted with your Master Vault Key.")
-                        else:
-                            st.error("🚨 Master Vault Key mismatch! The provided key does not decrypt existing shards in your vault.")
-            else: 
+                        save_account(st.session_state.user_email, site, user, pwd, master_key)
+                    st.session_state.oracle_result = {
+                        "analysis": analysis,
+                        "grade": grade,
+                        "color": color,
+                    }
+                    st.session_state.clear_oracle_secrets_next_run = True
+                    toast("shard_saved")
+                    st.rerun()
+                except Exception:
+                    try:
+                        refunded = refund_credit(st.session_state.user_email)
+                    except Exception:
+                        refunded = False
+                    st.session_state.oracle_error = (
+                        "The credential could not be archived. The Ether-Credit was restored."
+                        if refunded else
+                        "The credential could not be archived. The credit balance could not be confirmed; contact the administrator before retrying."
+                    )
+                    st.session_state.clear_oracle_secrets_next_run = True
+                    st.rerun()
+            elif get_user_credits(st.session_state.user_email) <= 0:
                 notify("no_credits", notify_type="error")
+            else:
+                st.warning("The credit could not be reserved. Please retry once.")
 
 # ─────────────────────────────────────────────
 #  10. MODULE 3: CREDIT-BAY
@@ -627,75 +787,81 @@ elif module == "🔮 AI Oracle":
 
 elif module == "🔋 Credit-Bay":
     st.title("🔋 Credit-Bay Operations")
-    st.markdown("Acquire Ether-Credits to power the Aegis Oracle. Conversion: `₹10 = 1 EC`")
-    
+    st.markdown("Acquire Ether-Credits to power the Aegis Oracle. Conversion: `₹10 = 1 EC`.")
+
+    qr_path = Path(_get_app_setting("PAYMENT_QR_IMAGE", "my_upi_qr.jpeg"))
+    if not qr_path.is_absolute():
+        qr_path = (BASE_DIR / qr_path).resolve()
+    recipient_name = _get_app_setting("PAYMENT_RECIPIENT_NAME")
+    recipient_vpa = _get_app_setting("PAYMENT_RECIPIENT_VPA")
+
     col_qr, col_form = st.columns([1, 1.5])
-    op_name = get_operator_name()
-    op_vpa = get_operator_vpa()
-    
     with col_qr:
         with st.container():
             st.markdown("### 🏦 Secure Transfer")
-            # Fallback if image is missing
-            try:
-                st.image("my_upi_qr.jpeg", use_container_width=True)
-            except Exception:
-                st.error("QR Code missing from repository.")
-            
-            # F14 Fix: Dynamic operator details
-            st.markdown(f"""
-            <div style="background: rgba(8,13,36,0.6); padding: 15px; border-radius: 8px; border: 1px solid #7064DF; text-align: center;">
-                <p style="margin:0; color:#A0AEC0;">Verified Payment Address (VPA)</p>
-                <h3 style="margin:5px 0; color:#94FBAB;">{op_vpa}</h3>
-                <p style="margin:0; color:#FFFFFF;">Recipient: {op_name}</p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            st.markdown("<br><p style='text-align: center; font-size: 0.8em; color:#A0AEC0;'>🛡️ Transaction Security Guarantee — Verified by Vision Sentinel</p>", unsafe_allow_html=True)
+            if qr_path.is_file() and qr_path.resolve().is_relative_to(BASE_DIR):
+                st.image(str(qr_path), use_container_width=True)
+            else:
+                st.info("Payment QR image is not configured. The owner can add the private QR locally and set PAYMENT_QR_IMAGE.")
+            st.markdown("**Payment recipient details**")
+            st.text(f"Recipient: {recipient_name or 'Not configured'}")
+            st.text(f"VPA: {recipient_vpa or 'Not configured'}")
+            st.caption("Verify recipient details in your payment app before transferring funds.")
 
     with col_form:
         with st.container():
-            st.markdown("### 📡 Submit Verification Shard")
-            
-            amount = st.number_input("Transferred Amount (₹)", min_value=10, step=10, value=50)
-            st.markdown(f"### 💎 Yield: <span style='color:#94FBAB'>{amount // 10} Ether-Credits</span>", unsafe_allow_html=True)
-            
+            st.markdown("### 📡 Submit Verification Screenshot")
+            amount = st.number_input("Transferred Amount (₹)", min_value=10, max_value=100000, step=10, value=50)
+            st.markdown(f"### 💎 Yield: **{int(amount) // 10} Ether-Credits**")
             shot = st.file_uploader("Upload Transaction Screenshot", type=["jpg", "png", "jpeg"])
-            
+            payment_consent = st.checkbox(
+                "I consent to sending this screenshot and the expected payment amount to Google's Gemini API for automated analysis. The image may contain personal or financial information. The AI result is advisory; an administrator makes the final decision.",
+                value=False,
+            )
+
             if st.button("🚀 Engage Vision Sentinel", type="primary", use_container_width=True):
-                if shot:
-                    with st.spinner("Vision Sentinel is analyzing the cryptographic proof..."):
-                        if not os.path.exists("audit_screenshots"):
-                            os.makedirs("audit_screenshots")
-                        
-                        # F15 Fix: Unpredictable UUID-based audit file naming
-                        safe_token = uuid.uuid4().hex[:12]
-                        timestamp = int(datetime.datetime.now().timestamp())
-                        img_path = f"audit_screenshots/audit_{timestamp}_{safe_token}.png"
-                        
-                        img_bytes = shot.getbuffer()
-                        with open(img_path, "wb") as f: 
-                            f.write(img_bytes)
-                        
-                        # Vision Sentinel Analysis
-                        sentinel_result = verify_payment_screenshot(img_bytes.tobytes(), amount)
-                        verdict = sentinel_result.get("verdict", "PENDING_ADMIN_REVIEW")
-                        display = get_sentinel_verdict_display(verdict)
-                        
-                        # Log to Ledger
-                        log_transaction(st.session_state.user_email, amount, verdict, img_path)
-                        
-                        # Display Results
-                        st.markdown("---")
-                        st.markdown(f"### Sentinel Verdict: {display['icon']} <span style='color:{display['color']}'>{display['label']}</span>", unsafe_allow_html=True)
-                        
-                        if verdict == "VERIFIED":
-                            st.success("Vision Sentinel has verified the transaction. Awaiting final Administrator sign-off.")
-                            for finding in sentinel_result.get("findings", []):
-                                st.markdown(f"▸ {finding}")
-                        else:
-                            st.warning("Vision Sentinel flagged anomalies. Manual administrator review required.")
-                            for finding in sentinel_result.get("findings", []):
-                                st.markdown(f"▸ {finding}")
+                if int(amount) % 10 != 0:
+                    st.error("Payment amount must be a multiple of ₹10.")
+                elif not shot:
+                    st.error("A payment screenshot is required.")
+                elif not payment_consent:
+                    st.warning("Consent is required before any screenshot is sent for external AI analysis.")
                 else:
-                    st.error("🚨 Verification shard (screenshot) is required.")
+                    saved_path = None
+                    transaction_logged = False
+                    try:
+                        normalized_image = _prepare_uploaded_screenshot(shot)
+                        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+                        upload_name = f"{uuid.uuid4().hex}.jpg"
+                        saved_path = UPLOAD_DIR / upload_name
+                        saved_path.write_bytes(normalized_image)
+                        relative_path = str(saved_path.relative_to(BASE_DIR))
+                        with st.spinner("Vision Sentinel is reviewing the consented screenshot..."):
+                            sentinel_result = verify_payment_screenshot(normalized_image, int(amount))
+                        # Regardless of any AI label, transactions always enter the
+                        # human approval queue as PENDING.
+                        transaction_id = log_transaction(
+                            st.session_state.user_email,
+                            int(amount),
+                            "PENDING",
+                            relative_path,
+                        )
+                        transaction_logged = True
+                        display = get_sentinel_verdict_display(sentinel_result.get("verdict", "PENDING_ADMIN_REVIEW"))
+                        st.markdown("---")
+                        st.markdown(
+                            f"### Sentinel Advisory: {display['icon']} <span style='color:{display['color']}'>{display['label']}</span>",
+                            unsafe_allow_html=True,
+                        )
+                        st.info(f"Transaction #{transaction_id} has been submitted as PENDING. Only an administrator can approve it and grant credits.")
+                        st.caption(f"Confidence: {float(sentinel_result.get('confidence', 0.0)):.0%}")
+                        for finding in sentinel_result.get("findings", []):
+                            st.write(f"• {finding}")
+                    except (ValueError, OSError) as exc:
+                        if saved_path and not transaction_logged:
+                            saved_path.unlink(missing_ok=True)
+                        st.error(str(exc))
+                    except Exception:
+                        if saved_path and not transaction_logged:
+                            saved_path.unlink(missing_ok=True)
+                        st.error("The screenshot could not be processed. No automated approval was performed.")

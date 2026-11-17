@@ -9,7 +9,6 @@
 ╚══════════════════════════════════════════════════════════════╝
 """
 
-import os
 import datetime
 import streamlit as st
 from database_logic import log_security_event
@@ -22,12 +21,8 @@ EVENT_TYPES = {
     "AUTH_SUCCESS":          {"icon": "🔓", "severity": "INFO",     "label": "Identity Sync"},
     "AUTH_FAILURE":          {"icon": "🚨", "severity": "WARNING",  "label": "Access Denied"},
     "IDENTITY_CREATED":      {"icon": "🧬", "severity": "INFO",     "label": "Shard Forged"},
-    "IDENTITY_PURGED":       {"icon": "⛔", "severity": "CRITICAL", "label": "Identity Purged"},
     "IDENTITY_BANNED":       {"icon": "⛔", "severity": "CRITICAL", "label": "Identity Revoked"},
     "IDENTITY_RESTORED":     {"icon": "✅", "severity": "INFO",     "label": "Identity Restored"},
-    "LOCKDOWN_ENGAGED":      {"icon": "🔒", "severity": "CRITICAL", "label": "Lockdown Engaged"},
-    "LOCKDOWN_TRIGGERED":    {"icon": "🔒", "severity": "CRITICAL", "label": "Global Lockdown"},
-    "WARNING_ISSUED":        {"icon": "⚠️", "severity": "WARNING",  "label": "Warning Issued"},
     "VAULT_ACCESS":          {"icon": "🔐", "severity": "INFO",     "label": "Vault Accessed"},
     "VAULT_ACCESS_DENIED":   {"icon": "🛑", "severity": "WARNING",  "label": "Vault Breach Attempt"},
     "VAULT_WRITE":           {"icon": "📝", "severity": "INFO",     "label": "Shard Archived"},
@@ -39,6 +34,7 @@ EVENT_TYPES = {
     "TRANSACTION_APPROVED":  {"icon": "✅", "severity": "INFO",     "label": "Transaction Verified"},
     "TRANSACTION_REJECTED":  {"icon": "❌", "severity": "WARNING",  "label": "Transaction Rejected"},
     "ADMIN_ACTION":          {"icon": "⚙️", "severity": "INFO",     "label": "Admin Override"},
+    "LOCKDOWN_TRIGGERED":    {"icon": "🔒", "severity": "CRITICAL", "label": "Global Lockdown"},
     "WARDEN_ALERT":          {"icon": "👁️", "severity": "WARNING",  "label": "Warden Alert"},
 }
 
@@ -68,7 +64,7 @@ IMMERSIVE_MESSAGES = {
     # ── Oracle ──
     "oracle_analyzing":     "The Aegis Oracle is performing adversarial entropy analysis...",
     "oracle_complete":      "Oracle audit complete. Tactical assessment delivered.",
-    "oracle_offline":       "The Oracle is currently unreachable. Verify your Groq API configuration.",
+    "oracle_offline":       "The Oracle is currently unreachable. Verify your Gemini API configuration.",
     "no_credits":           "Insufficient Ether-Credits. Visit the Credit-Bay to acquire additional resources.",
     
     # ── Credit-Bay ──
@@ -133,7 +129,6 @@ def notify_admin_action(action_description, target_email=None):
 def security_alert(event_type, target_email, details, severity=None):
     """
     Raise a security alert — logs to database and optionally displays to UI.
-    (F8 Fix)
     
     Args:
         event_type: Key from EVENT_TYPES dict
@@ -192,7 +187,7 @@ def format_event_for_display(event_row):
 
 
 def get_severity_color(severity):
-    """Return the CSS color for a severity level — matches the glassmorphism palette. (F8 Fix)"""
+    """Return the CSS color for a severity level — matches the glassmorphism palette."""
     colors = {
         "INFO":     "#94FBAB",   # Mint-Teal
         "WARNING":  "#FFB347",   # Amber
@@ -211,10 +206,11 @@ def format_timestamp(timestamp_str):
 
 
 def get_admin_contact():
-    """Return the system administrator contact information. (F9 & F14 Fix)"""
+    """Return an optional administrator contact configured outside source control."""
+    import os
     try:
-        if "ADMIN_PHONE" in st.secrets:
-            return st.secrets["ADMIN_PHONE"]
-    except Exception:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
         pass
-    return os.getenv("ADMIN_PHONE", "8910162728")
+    return os.getenv("ADMIN_CONTACT", "")

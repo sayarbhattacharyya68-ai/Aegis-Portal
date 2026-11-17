@@ -1,21 +1,39 @@
-# Security & Persistence
-vault.db
+# Environment secrets (keep .env.example tracked)
 .env
-secret.key
+.env.*
+!.env.example
+.streamlit/secrets.toml
 
-# Desktop App Build Artifacts
+# Local vault and SQLite sidecars
+vault.db
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Private payment material and user uploads
+my_upi_qr.*
+assets/private_payment/
+audit_screenshots/
+uploads/
+
+# Python environments and caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build outputs
 build/
 dist/
 *.spec
 
-# Ignore Python cache
-__pycache__/
-*.pyc
-
-# Ignore user uploads (Do not commit user transaction screenshots to GitHub)
-audit_screenshots/
-
-# Ignore SQLite temp files
-*.db-journal
-*.db-wal
-*.db-shm
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
