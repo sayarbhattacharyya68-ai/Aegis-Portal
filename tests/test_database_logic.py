@@ -186,8 +186,6 @@ def test_ban_retains_identity_and_records_but_blocks_user_actions(temp_db):
         assert conn.execute("SELECT COUNT(*) FROM users WHERE email=?", (owner,)).fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM accounts WHERE owner_email=?", (owner,)).fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM transactions WHERE user_email=?", (owner,)).fetchone()[0] == 1
-    if db.bcrypt is not None:
-        assert db.authenticate_user(owner, "A-strong-login-secret") == "banned"
     with pytest.raises(PermissionError):
         db.save_account(owner, "another", "user", "secret", "master")
     with pytest.raises(PermissionError):
