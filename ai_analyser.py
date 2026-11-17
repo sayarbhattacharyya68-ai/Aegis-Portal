@@ -367,8 +367,8 @@ def _amount_value(value: Any) -> float | None:
 def _recipient_matches(extracted: str) -> bool:
     """Require a meaningful configured recipient token to appear in OCR text."""
     configured = [
-        _get_secret("PAYMENT_RECIPIENT_NAME") or "",
-        _get_secret("PAYMENT_RECIPIENT_VPA") or "",
+        _get_secret("PAYMENT_RECIPIENT_NAME") or "Sayar Bhattacharyya",
+        _get_secret("PAYMENT_RECIPIENT_VPA") or "sayarbhattacharyya9@okhdfcbank",
     ]
     extracted_norm = re.sub(r"[^a-z0-9@._-]+", "", extracted.casefold())
     if not extracted_norm:
