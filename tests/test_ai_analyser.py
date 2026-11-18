@@ -135,3 +135,11 @@ def test_model_output_with_unexpected_container_types_uses_safe_defaults(monkeyp
     warden = ai.warden_assess_identity("nobody@example.test", [])
     assert warden["threat_level"] == "NOMINAL"
     assert warden["recommended_action"] == "MONITOR"
+
+def test_oracle_intermediate_heuristic_uses_moderate_label():
+    # A deliberately mid-range 12-character value: the heuristic band is not
+    # a breach lookup and must not be labelled as a confirmed compromise.
+    features = ai._derive_password_features("Abc123def456")
+    assert features["local_grade"] == "MODERATE"
+    report = ai.get_oracle_analysis("Abc123def456", allow_ai=False)
+    assert report.startswith("[MODERATE]")
