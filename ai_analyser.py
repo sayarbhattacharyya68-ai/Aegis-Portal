@@ -201,7 +201,7 @@ def _derive_password_features(password: str) -> dict[str, Any]:
     ):
         grade = "FORTIFIED"
     elif length >= 12 and estimate >= 50 and not common_pattern and not repeated:
-        grade = "COMPROMISED"
+        grade = "MODERATE"
     else:
         grade = "CRITICAL"
 
@@ -236,7 +236,7 @@ def _local_oracle_report(features: dict[str, Any]) -> str:
         notes.append("No common sequence pattern was detected locally")
     recommendation = {
         "FORTIFIED": "Keep this unique and never reuse it.",
-        "COMPROMISED": "Increase length and remove predictable patterns.",
+        "MODERATE": "Increase length and remove predictable patterns.",
         "CRITICAL": "Replace this credential with a stronger passphrase.",
     }[grade]
     return "\n".join([f"[{grade}]", *(f"▸ {item}" for item in notes[:3]), f"⚡ {recommendation}"])
@@ -297,7 +297,7 @@ def get_oracle_grade(analysis_text: str):
     text = analysis_text if isinstance(analysis_text, str) else ""
     for grade, color in (
         ("FORTIFIED", "#94FBAB"),
-        ("COMPROMISED", "#FFB347"),
+        ("MODERATE", "#FFB347"),
         ("CRITICAL", "#FF6B6B"),
     ):
         if f"[{grade}]" in text:
