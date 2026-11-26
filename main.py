@@ -29,7 +29,8 @@ from database_logic import (
     fetch_accounts, unlock_vault, update_account, delete_account, check_status,
     update_user_status, reset_vault_data, grant_gems, refund_credit, log_transaction,
     get_pending_transactions, approve_transaction, reject_transaction,
-    get_security_events, get_dashboard_stats, cleanup_expired_screenshots,
+    get_security_events, delete_security_events, get_dashboard_stats, cleanup_expired_screenshots,
+    log_security_event,
     clear_transaction_image_path
 )
 from ai_analyser import (
@@ -690,10 +691,42 @@ with st.sidebar.expander("⚙️ Admin Terminal", expanded=False):
             st.markdown(f"**Encrypted Shards:** {stats['total_shards']}")
             st.markdown(f"**Critical Events:** <span style='color:#FF6B6B'>{stats['threat_events']}</span>", unsafe_allow_html=True)
             
-            if st.button("📑 Refresh Log", use_container_width=True):
-                events = get_security_events(limit=50)
+            def _delete_selected_logs():
+                ids = list(st.session_state.get("log_delete_ids", []))
+                if ids:
+                    removed = delete_security_events(ids)
+                    log_security_event(
+                        "SECURITY_LOG_DELETED", "ADMIN",
+                        f"{removed} security log entr{'y' if removed == 1 else 'ies'} deleted by administrator",
+                        severity="WARNING",
+                    )
+                st.session_state.log_delete_ids = []
+                st.session_state.confirm_log_delete = False
+
+            st.button("🔄 Refresh Log", use_container_width=True, key="refresh_log_btn")
+            events = get_security_events(limit=50)
+            if events:
                 formatted = [format_event_for_display(e) for e in events]
                 st.dataframe(pd.DataFrame(formatted), use_container_width=True, hide_index=True)
+                labels = {e[0]: f"#{e[0]} · {e[2]}" for e in events}
+                st.multiselect(
+                    "Select log entries to delete",
+                    options=list(labels),
+                    format_func=lambda i: labels[i],
+                    key="log_delete_ids",
+                )
+                st.checkbox(
+                    "I understand the selected log entries will be permanently deleted.",
+                    key="confirm_log_delete",
+                )
+                st.button(
+                    "🗑️ Delete Selected Logs",
+                    use_container_width=True,
+                    disabled=not (st.session_state.get("log_delete_ids") and st.session_state.get("confirm_log_delete")),
+                    on_click=_delete_selected_logs,
+                )
+            else:
+                st.info("No log entries to show.")
 
             st.markdown("<br>", unsafe_allow_html=True)
             confirm_vault_purge = st.checkbox(
