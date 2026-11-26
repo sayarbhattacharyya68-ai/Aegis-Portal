@@ -577,7 +577,11 @@ with st.sidebar.expander("⚙️ Admin Terminal", expanded=False):
                         assessment = warden_assess_identity(target, history)
                         threat_ui = get_threat_level_display(assessment.get("threat_level"))
                         st.markdown(f"**Threat:** {threat_ui['icon']} <span style='color:{threat_ui['color']}'>{assessment.get('threat_level')}</span>", unsafe_allow_html=True)
-                        st.markdown(f"**Score:** {assessment.get('risk_score')}/10.0")
+                        if assessment.get("risk_score") is None:
+                            st.warning("No AI threat score was assigned. Manual review is required.")
+                            st.markdown("**Score:** Not available")
+                        else:
+                            st.markdown(f"**Score:** {assessment.get('risk_score')}/10.0")
                         st.write(assessment.get("assessment", "No assessment available."))
                         st.markdown(f"**Advisory only — recommended action:** `{assessment.get('recommended_action', 'MONITOR')}`")
                         for indicator in assessment.get("indicators", []):
