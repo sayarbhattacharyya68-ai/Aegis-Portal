@@ -528,7 +528,7 @@ WARDEN_RESPONSE_SCHEMA = {
     "type": "OBJECT",
     "properties": {
         "threat_level": {"type": "STRING", "enum": ["NOMINAL", "ELEVATED", "CRITICAL"]},
-        "risk_score": {"type": "NUMBER", "minimum": 0, "maximum": 10},
+        "risk_score": {"type": "NUMBER"},
         "assessment": {"type": "STRING"},
         "recommended_action": {"type": "STRING", "enum": ["MONITOR", "WARN", "BAN", "LOCKDOWN"]},
         "indicators": {"type": "ARRAY", "items": {"type": "STRING"}},
