@@ -731,6 +731,22 @@ def get_security_events(limit=100, event_filter=None, email_filter=None):
         return conn.execute(query, params).fetchall()
 
 
+def delete_security_events(event_ids):
+    """Delete the given security-event rows by id and return how many were removed."""
+    ids = []
+    for value in event_ids:
+        try:
+            ids.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    if not ids:
+        return 0
+    placeholders = ",".join("?" for _ in ids)
+    with get_db() as conn:
+        cursor = conn.execute(f"DELETE FROM security_events WHERE id IN ({placeholders})", ids)
+        return cursor.rowcount
+
+
 def get_dashboard_stats():
     with get_db() as conn:
         total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
