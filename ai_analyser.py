@@ -535,7 +535,13 @@ def _sanitize_event_history(event_history: list | None) -> list[dict[str, str]]:
 
 
 def warden_assess_identity(email: str, event_history: list) -> dict[str, Any]:
-    """Analyze coarse event metadata; email and event details are never sent."""
+    """Assess an identity's recent security events with the Shard Warden.
+
+    Only the sanitized event type, severity and recency bucket are sent (see
+    _sanitize_event_history). The returned threat level, score and action are
+    advisory only. If the model is unavailable or returns an invalid response,
+    a NOMINAL fallback is returned and manual review is recommended.
+    """
     safe_events = _sanitize_event_history(event_history)
     response_text, error = _generate_content(
         model=get_model_name("text"),
