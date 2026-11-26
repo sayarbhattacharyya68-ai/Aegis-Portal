@@ -63,7 +63,7 @@ def test_sentinel_downgrades_when_recipient_not_configured(monkeypatch):
     assert result["recipient_match"] is False
 
 
-def test_warden_does_not_send_identity_or_event_details(monkeypatch):
+def test_warden_uses_structured_ai_and_sends_only_sanitized_event_data(monkeypatch):
     observed = {}
 
     def fake_generate(**kwargs):
@@ -71,24 +71,36 @@ def test_warden_does_not_send_identity_or_event_details(monkeypatch):
         return json.dumps({
             "threat_level": "ELEVATED",
             "risk_score": 5.5,
-            "assessment": "Repeated authentication failures were observed.",
+            "assessment": "Repeated authentication failures warrant administrator review.",
             "recommended_action": "WARN",
-            "indicators": ["Repeated failures"],
+            "indicators": ["Repeated failed authentication events"],
         }), None
 
     monkeypatch.setattr(ai, "_generate_content", fake_generate)
-    events = [(1, "2026-11-17 20:00:00", "AUTH_FAILURE", "private@example.test", "IP 10.1.2.3 secret text", "WARNING")]
+    events = [
+        (1, "2026-11-17 20:00:00", "AUTH_FAILURE", "private@example.test", "IP 10.1.2.3 secret text", "WARNING"),
+        (2, "2026-11-17 20:01:00", "AUTH_THROTTLED", "private@example.test", "Private details", "WARNING"),
+    ]
     result = ai.warden_assess_identity("private@example.test", events)
-    payload = str(observed.get("contents", ""))
-    assert "private@example.test" not in payload
-    assert "10.1.2.3" not in payload
-    assert "secret text" not in payload
+    payload = json.loads(observed["contents"])
+    assert "private@example.test" not in observed["contents"]
+    assert "10.1.2.3" not in observed["contents"]
+    assert "secret text" not in observed["contents"]
+    assert payload["events_reviewed"] == 2
+    assert payload["event_counts"]["AUTH_FAILURE"] == 1
+    assert payload["event_counts"]["AUTH_THROTTLED"] == 1
+    assert observed["response_mime_type"] == "application/json"
+    assert observed["response_schema"] == ai.WARDEN_RESPONSE_SCHEMA
+    assert observed["max_output_tokens"] == 2048
+    assert result["assessment_status"] == "complete"
+    assert result["threat_level"] == "ELEVATED"
+    assert result["risk_score"] == 5.5
     assert result["recommended_action"] == "WARN"
 
 
-def test_warden_rejects_invalid_enums_and_ranges(monkeypatch):
+def test_warden_rejects_invalid_ai_output_without_fabricating_nominal_score(monkeypatch):
     raw = {
-        "threat_level": "EXECUTE_ADMIN",
+        "threat_level": "CRITICAL",
         "risk_score": 999,
         "assessment": "x" * 2000,
         "recommended_action": "PURGE_DATABASE",
@@ -96,17 +108,41 @@ def test_warden_rejects_invalid_enums_and_ranges(monkeypatch):
     }
     monkeypatch.setattr(ai, "_generate_content", lambda **kwargs: (json.dumps(raw), None))
     result = ai.warden_assess_identity("private@example.test", [])
-    assert result["threat_level"] == "NOMINAL"
-    assert result["risk_score"] == 10.0
-    assert result["recommended_action"] == "MONITOR"
-    assert len(result["assessment"]) <= 800
-    assert len(result["indicators"][0]) <= 160
+    assert result["assessment_status"] == "unavailable"
+    assert result["threat_level"] == "UNAVAILABLE"
+    assert result["risk_score"] is None
+    assert result["recommended_action"] == "MANUAL_REVIEW"
 
 
 def test_gemini_missing_key_uses_safe_sentinel_fallback(monkeypatch):
     monkeypatch.setattr(ai, "_get_gemini_client", lambda: None)
     result = ai.verify_payment_screenshot(b"fake", 50)
     assert result["verdict"] == "PENDING_ADMIN_REVIEW"
+
+
+def test_warden_api_failure_is_not_displayed_as_nominal(monkeypatch):
+    monkeypatch.setattr(ai, "_generate_content", lambda **kwargs: (None, "authentication"))
+    result = ai.warden_assess_identity("private@example.test", [])
+    assert result["assessment_status"] == "unavailable"
+    assert result["threat_level"] == "UNAVAILABLE"
+    assert result["risk_score"] is None
+    assert result["recommended_action"] == "MANUAL_REVIEW"
+    assert "authentication failed" in result["assessment"].casefold()
+
+
+def test_warden_rejects_score_threat_label_mismatch(monkeypatch):
+    raw = {
+        "threat_level": "NOMINAL",
+        "risk_score": 8.2,
+        "assessment": "The supplied recent events show repeated high-risk signals.",
+        "recommended_action": "LOCKDOWN",
+        "indicators": ["Repeated critical events"],
+    }
+    monkeypatch.setattr(ai, "_generate_content", lambda **kwargs: (json.dumps(raw), None))
+    result = ai.warden_assess_identity("private@example.test", [])
+    assert result["assessment_status"] == "unavailable"
+    assert result["error_code"] == "inconsistent_score"
+    assert result["risk_score"] is None
 
 
 def test_recipient_match_rejects_short_ocr_substring(monkeypatch):
@@ -133,5 +169,7 @@ def test_model_output_with_unexpected_container_types_uses_safe_defaults(monkeyp
     }
     monkeypatch.setattr(ai, "_generate_content", lambda **kwargs: (json.dumps(warden_raw), None))
     warden = ai.warden_assess_identity("nobody@example.test", [])
-    assert warden["threat_level"] == "NOMINAL"
-    assert warden["recommended_action"] == "MONITOR"
+    assert warden["assessment_status"] == "unavailable"
+    assert warden["threat_level"] == "UNAVAILABLE"
+    assert warden["risk_score"] is None
+    assert warden["recommended_action"] == "MANUAL_REVIEW"
